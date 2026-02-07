@@ -97,16 +97,18 @@ export default function Step1GetStarted() {
 
       try {
         // Create project if needed
-        if (!useBuildStore.getState().projectId && user) {
+        let activeProjectId = useBuildStore.getState().projectId;
+        if (!activeProjectId && user) {
           const proj = await createProject(
             user.user_id,
             projectTitle || file.name.replace(/\.[^.]+$/, ""),
             projectDescription
           );
           setProjectId(proj.project_id);
+          activeProjectId = proj.project_id;
         }
 
-        const result = await uploadFile(file, storedProjectId || undefined);
+        const result = await uploadFile(file, activeProjectId || undefined);
         if (result.project_id) {
           // Keep store project id aligned with backend upload state.
           setProjectId(result.project_id);
@@ -133,7 +135,6 @@ export default function Step1GetStarted() {
     },
     [
       user,
-      storedProjectId,
       projectTitle,
       projectDescription,
       setProjectId,
@@ -153,7 +154,11 @@ export default function Step1GetStarted() {
       setDriverErrorMsg("");
 
       try {
-        const result = await uploadDriverFile(file, storedProjectId || undefined);
+        const activeProjectId = useBuildStore.getState().projectId;
+        const result = await uploadDriverFile(file, activeProjectId || undefined);
+        if (result.project_id) {
+          setProjectId(result.project_id);
+        }
         setDriverInfo({
           fileName: file.name,
           columns: result.columns || [],
@@ -173,7 +178,7 @@ export default function Step1GetStarted() {
         setDriverLoading(false);
       }
     },
-    [storedProjectId, setDriverInfo]
+    [setDriverInfo, setProjectId]
   );
 
   const dropzoneAccept = {

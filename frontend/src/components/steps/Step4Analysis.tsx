@@ -413,12 +413,26 @@ export default function Step4Analysis() {
     }
 
     return (analysis?.datasets.temp_weekly || [])
-      .map((r) => ({
-        ts: parseTimestamp(r.date),
-        week_ending: r.date,
-        temp_mean: Number(r.temp_mean),
-        holiday_count: 0,
-      }))
+      .map((row) => {
+        const asRecord = row as LooseRecord;
+        const dateString = getDateString(asRecord);
+        if (!dateString) {
+          return null;
+        }
+        const tempRaw =
+          asRecord.temp_mean ??
+          asRecord.value ??
+          asRecord.temp ??
+          getPrimaryNumericValue(asRecord);
+        const temp = Number(tempRaw);
+        return {
+          ts: parseTimestamp(dateString),
+          week_ending: dateString,
+          temp_mean: Number.isFinite(temp) ? temp : 0,
+          holiday_count: 0,
+        };
+      })
+      .filter((r): r is { ts: number | null; week_ending: string; temp_mean: number; holiday_count: number } => r !== null)
       .filter((r): r is { ts: number; week_ending: string; temp_mean: number; holiday_count: number } => r.ts !== null)
       .map((r) => ({
         ...r,
