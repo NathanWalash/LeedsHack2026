@@ -215,7 +215,7 @@ export default function Step3TrainForecast() {
           <div className="space-y-1">
             <h2 className="text-base font-semibold text-white">Step 3: Train and Forecast</h2>
             <p className="text-sm text-slate-400">
-              Configure models, run training, and generate forecasts for the analysis stage.
+              Pick your model settings, train the models, and generate forecasts.
             </p>
           </div>
         </div>
@@ -224,7 +224,7 @@ export default function Step3TrainForecast() {
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-6">
         <h3 className="text-lg font-semibold text-white flex items-center gap-2">
           <Cpu className="w-5 h-5 text-teal-300" />
-          Model Selection
+          Choose Models
         </h3>
 
         <BubbleSelect
@@ -251,7 +251,7 @@ export default function Step3TrainForecast() {
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-4">
         <h3 className="text-lg font-semibold text-white flex items-center gap-2">
           <BarChart3 className="w-5 h-5 text-teal-300" />
-          Lag Config
+          Lag Settings
         </h3>
         <BubbleSelect
           label="Recommended ranges"
@@ -275,7 +275,7 @@ export default function Step3TrainForecast() {
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-6">
         <h3 className="text-lg font-semibold text-white flex items-center gap-2">
           <TrendingUp className="w-5 h-5 text-teal-300" />
-          Drivers
+          Optional Drivers
         </h3>
         {driverFileName ? (
           <>
@@ -305,7 +305,7 @@ export default function Step3TrainForecast() {
           </>
         ) : (
           <p className="text-sm text-slate-400">
-            No driver file uploaded. Training will run on target data only.
+            No driver file was uploaded, so training will use only your main dataset.
           </p>
         )}
 
@@ -326,7 +326,7 @@ export default function Step3TrainForecast() {
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-6">
         <h3 className="text-lg font-semibold text-white flex items-center gap-2">
           <Calendar className="w-5 h-5 text-teal-300" />
-          Test Window
+          Test Settings
         </h3>
 
         <BubbleSelect
@@ -352,7 +352,7 @@ export default function Step3TrainForecast() {
 
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
         <BubbleSelect
-          label="Forecast horizon"
+          label="Forecast length"
           options={HORIZON_OPTIONS}
           selected={String(horizon)}
           onSelect={(value) => setHorizon(Number(value))}
@@ -367,7 +367,7 @@ export default function Step3TrainForecast() {
           <div>
             <h3 className="text-lg font-semibold text-white">Run Training</h3>
             <p className="text-sm text-slate-400">
-              This trains baseline and multivariate models with your current configuration.
+              Click train to run both models with your selected settings.
             </p>
           </div>
           <Button onClick={handleTrain} disabled={!canRun || isLoading} size="lg">
@@ -394,7 +394,7 @@ export default function Step3TrainForecast() {
         {status === "success" && (
           <div className="mt-4 flex items-center gap-2 text-emerald-400 text-sm">
             <CheckCircle2 className="w-4 h-4" />
-            Training complete. Continue to analysis.
+            Training finished. You can now continue to Analysis and Results.
           </div>
         )}
 
@@ -407,12 +407,12 @@ export default function Step3TrainForecast() {
       </div>
 
       <div className="flex items-center justify-between">
-        <Button variant="secondary" onClick={prevStep}>
+        <Button variant="secondary" onClick={prevStep} size="lg">
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back
         </Button>
         <Button onClick={handleContinue} disabled={status !== "success"} size="lg">
-          Continue to Analysis
+          Continue to Analysis & Results
           <ArrowRight className="w-4 h-4 ml-2" />
         </Button>
       </div>

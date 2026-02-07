@@ -236,7 +236,7 @@ export default function Step2ProcessData() {
           <div className="space-y-1">
             <h2 className="text-base font-semibold text-white">Step 2: Process Data</h2>
             <p className="text-sm text-slate-400">
-              Choose date and target columns, then set cleaning rules before model training.
+              Choose your date and target columns, then pick simple cleaning options.
             </p>
           </div>
         </div>
@@ -245,7 +245,7 @@ export default function Step2ProcessData() {
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-6">
         <h3 className="text-lg font-semibold text-white flex items-center gap-2">
           <Calendar className="w-5 h-5 text-teal-300" />
-          Column Selection
+          Choose Columns
         </h3>
 
         <BubbleSelect
@@ -259,7 +259,7 @@ export default function Step2ProcessData() {
         />
 
         <BubbleSelect
-          label="Target Column (what to forecast)"
+          label="Target Column"
           options={targetColOptions}
           selected={targetCol || ""}
           onSelect={setTargetCol}
@@ -272,11 +272,11 @@ export default function Step2ProcessData() {
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-6">
         <h3 className="text-lg font-semibold text-white flex items-center gap-2">
           <BarChart3 className="w-5 h-5 text-teal-300" />
-          Processing Pipeline
+          Clean and Prepare Data
         </h3>
 
         <BubbleSelect
-          label="Data Frequency"
+          label="How often is your data?"
           options={FREQUENCY_OPTIONS}
           selected={frequency}
           onSelect={setFrequency}
@@ -286,7 +286,7 @@ export default function Step2ProcessData() {
         />
 
         <BubbleSelect
-          label="Missing Data Strategy"
+          label="How should we fill missing values?"
           options={MISSING_STRATEGY_OPTIONS}
           selected={missingStrategy}
           onSelect={setMissingStrategy}
@@ -296,7 +296,7 @@ export default function Step2ProcessData() {
         />
 
         <BubbleSelect
-          label="Outlier Strategy"
+          label="How should we handle outliers?"
           options={OUTLIER_STRATEGY_OPTIONS}
           selected={normalizedOutlierStrategy || "keep"}
           onSelect={setOutlierStrategy}
@@ -306,7 +306,7 @@ export default function Step2ProcessData() {
         />
 
         <BubbleSelect
-          label="Driver Outlier Strategy"
+          label="How should we handle driver outliers?"
           options={OUTLIER_STRATEGY_OPTIONS}
           selected={normalizedDriverOutlierStrategy || "keep"}
           onSelect={setDriverOutlierStrategy}
@@ -318,7 +318,7 @@ export default function Step2ProcessData() {
         {missingStrategy === "value" && (
           <Input
             type="number"
-            label="Custom Fill Value"
+            label="Custom Fill Number"
             placeholder="e.g. 0"
             value={missingFillValue}
             onChange={(e) => setMissingFillValue(e.target.value)}
@@ -333,12 +333,12 @@ export default function Step2ProcessData() {
       )}
 
       <div className="flex items-center justify-between">
-        <Button variant="secondary" onClick={prevStep}>
+        <Button variant="secondary" onClick={prevStep} size="lg">
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back
         </Button>
         <Button onClick={handleContinue} disabled={!canContinue} size="lg">
-          Continue to Train
+          Continue to Model Training
           <ArrowRight className="w-4 h-4 ml-2" />
         </Button>
       </div>

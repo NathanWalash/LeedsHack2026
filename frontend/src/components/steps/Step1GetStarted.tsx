@@ -217,7 +217,7 @@ export default function Step1GetStarted() {
           <div className="space-y-1">
             <h2 className="text-base font-semibold text-white">Step 1: Project Setup</h2>
             <p className="text-sm text-slate-400">
-              Add project context and upload your datasets to begin the forecast pipeline.
+              Give your project a name, then upload your main data to get started.
             </p>
           </div>
         </div>
@@ -236,8 +236,8 @@ export default function Step1GetStarted() {
           onChange={(e) => setProjectTitle(e.target.value)}
         />
         <Input
-          label="Description (optional)"
-          placeholder="What are you forecasting and why?"
+          label="Project Description (optional)"
+          placeholder="Tell us what you want to forecast"
           value={projectDescription}
           onChange={(e) => setProjectDescription(e.target.value)}
         />
@@ -271,11 +271,11 @@ export default function Step1GetStarted() {
           <Upload className="w-10 h-10 text-slate-500 mx-auto mb-3" />
           <p className="text-slate-400 font-medium">
             {isDragActive
-              ? "Drop it here!"
-              : "Drag & drop a CSV or Excel file, or click to browse"}
+              ? "Drop your file here"
+              : "Drag and drop a CSV or Excel file, or click to choose one"}
           </p>
           <p className="text-xs text-slate-600 mt-1">
-            Accepts .csv, .xlsx, and .xls files with a date column and at least one numeric column
+            Use a file with a date column and at least one number column
           </p>
         </div>
 
@@ -339,7 +339,7 @@ export default function Step1GetStarted() {
           </span>
         </div>
         <p className="text-sm text-slate-500 mb-4">
-          Upload additional exogenous / driver variables (e.g. weather, promotions, economic indicators) to improve forecast accuracy.
+          Optional: add extra data like weather, promotions, or events to help the model learn.
         </p>
 
         {!driverFileName ? (
@@ -356,11 +356,11 @@ export default function Step1GetStarted() {
               <TrendingUp className="w-8 h-8 text-slate-500 mx-auto mb-2" />
               <p className="text-slate-400 font-medium text-sm">
                 {isDriverDragActive
-                  ? "Drop driver file here!"
-                  : "Drag & drop a driver data file, or click to browse"}
+                  ? "Drop driver file here"
+                  : "Drag and drop a driver file, or click to choose one"}
               </p>
               <p className="text-xs text-slate-600 mt-1">
-                Same formats supported - should share a date column with your main data
+                Use the same date format as your main dataset
               </p>
             </div>
 
