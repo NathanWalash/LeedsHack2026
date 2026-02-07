@@ -10,6 +10,10 @@ import {
   FileSpreadsheet,
   CheckCircle2,
   AlertCircle,
+  Table2,
+  Calendar,
+  Hash,
+  X,
 } from "lucide-react";
 
 const USE_CASE_OPTIONS = [
@@ -38,6 +42,14 @@ export default function Step1GetStarted() {
     isLoading,
     setLoading,
     setLoadingMessage,
+    columns,
+    numericColumns,
+    detectedDateCol,
+    rowCount,
+    previewData,
+    columnDtypes,
+    removeUploadedFile,
+    clearFileInfo,
   } = useBuildStore();
   const user = useAuthStore((s) => s.user);
 
@@ -72,7 +84,9 @@ export default function Step1GetStarted() {
           columns: result.columns || [],
           numericColumns: result.numeric_columns || [],
           detectedDateCol: result.detected_date_col || null,
-          rowCount: result.row_count || 0,
+          rowCount: result.rows || 0,
+          previewData: result.preview || [],
+          columnDtypes: result.dtypes || {},
         });
         setUploadStatus("success");
       } catch (err: any) {
@@ -99,7 +113,11 @@ export default function Step1GetStarted() {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: { "text/csv": [".csv"] },
+    accept: {
+      "text/csv": [".csv"],
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": [".xlsx"],
+      "application/vnd.ms-excel": [".xls"],
+    },
     maxFiles: 1,
   });
 
@@ -153,10 +171,10 @@ export default function Step1GetStarted() {
           <p className="text-slate-400 font-medium">
             {isDragActive
               ? "Drop it here!"
-              : "Drag & drop a CSV file, or click to browse"}
+              : "Drag & drop a CSV or Excel file, or click to browse"}
           </p>
           <p className="text-xs text-slate-600 mt-1">
-            Accepts .csv files with a date column and at least one numeric column
+            Accepts .csv, .xlsx, and .xls files with a date column and at least one numeric column
           </p>
         </div>
 
@@ -186,15 +204,107 @@ export default function Step1GetStarted() {
             {uploadedFiles.map((f) => (
               <span
                 key={f}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-sm text-slate-300"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-sm text-slate-300 group"
               >
                 <FileSpreadsheet className="w-3.5 h-3.5 text-teal-400" />
                 {f}
+                <button
+                  type="button"
+                  onClick={() => {
+                    removeUploadedFile(f);
+                    clearFileInfo();
+                    setUploadStatus("idle");
+                  }}
+                  className="ml-1 p-0.5 rounded-md text-slate-500 hover:text-red-400 hover:bg-slate-700 transition-colors"
+                  aria-label={`Remove ${f}`}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </span>
             ))}
           </div>
         )}
       </div>
+
+      {/* Data Preview */}
+      {uploadStatus === "success" && previewData.length > 0 && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+              <Table2 className="w-5 h-5 text-teal-400" />
+              Data Preview
+            </h3>
+            <span className="text-xs text-slate-500">
+              Showing {previewData.length} of {rowCount} rows &middot; {columns.length} columns
+            </span>
+          </div>
+
+          {/* Summary chips */}
+          <div className="flex flex-wrap gap-2">
+            {detectedDateCol && (
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-teal-900/30 border border-teal-800 text-xs text-teal-300">
+                <Calendar className="w-3 h-3" />
+                Date: {detectedDateCol}
+              </span>
+            )}
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-300">
+              <Hash className="w-3 h-3" />
+              {numericColumns.length} numeric column{numericColumns.length !== 1 ? "s" : ""}
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-slate-800 border border-slate-700 text-xs text-slate-300">
+              {rowCount.toLocaleString()} rows
+            </span>
+          </div>
+
+          {/* Scrollable table */}
+          <div className="overflow-auto max-h-80 rounded-xl border border-slate-800">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-slate-800/90 backdrop-blur">
+                  {columns.map((col) => (
+                    <th
+                      key={col}
+                      className={`px-3 py-2 text-left font-medium whitespace-nowrap border-b border-slate-700 ${
+                        col === detectedDateCol
+                          ? "text-teal-400"
+                          : numericColumns.includes(col)
+                          ? "text-blue-400"
+                          : "text-slate-400"
+                      }`}
+                    >
+                      <div>{col}</div>
+                      <div className="text-[10px] font-normal text-slate-600 mt-0.5">
+                        {columnDtypes[col] || "—"}
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {previewData.map((row, i) => (
+                  <tr
+                    key={i}
+                    className="border-b border-slate-800/50 hover:bg-slate-800/30 transition-colors"
+                  >
+                    {columns.map((col) => (
+                      <td
+                        key={col}
+                        className="px-3 py-1.5 whitespace-nowrap text-slate-300"
+                      >
+                        {row[col] === null || row[col] === undefined ? (
+                          <span className="text-slate-600 italic">null</span>
+                        ) : (
+                          String(row[col])
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* Continue */}
       <div className="flex justify-end">
