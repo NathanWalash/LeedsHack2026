@@ -1,14 +1,19 @@
-﻿import streamlit as st
+import streamlit as st
+
+from src.flow import hide_default_sidebar_nav, init_flow_state
+from src.ui import apply_ui_theme
 
 st.set_page_config(
     page_title="LeedsHack2026 Forecasting",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
-st.title("LeedsHack2026 Forecasting")
-st.caption("MVP skeleton: upload, process, forecast, report, showcase")
+hide_default_sidebar_nav()
+apply_ui_theme()
+init_flow_state()
 
-# Session state bootstrap
+# Session state bootstrap for app data objects.
 DEFAULT_STATE = {
     "project": None,
     "raw_files": [],
@@ -29,13 +34,4 @@ for key, value in DEFAULT_STATE.items():
     if key not in st.session_state:
         st.session_state[key] = value
 
-st.markdown("""
-Use the navigation in the sidebar to open each page.
-
-**Build order**
-1. Welcome + Get Started
-2. Process Data
-3. Train & Forecast
-4. Outputs
-5. Showcase
-""")
+st.switch_page("pages/1_Welcome.py")
