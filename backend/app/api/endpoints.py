@@ -26,6 +26,7 @@ router = APIRouter()
 # In-memory stores for demo
 _projects: dict = {}
 _dataframes: dict = {}
+_driver_dataframes: dict = {}  # project_id -> driver DataFrame
 _users: dict = {}  # username -> {password_hash, user_id}
 _user_projects: dict = {}  # user_id -> [project_ids]
 
@@ -113,6 +114,48 @@ async def upload_file(file: UploadFile = File(...)):
 
     return {
         "project_id": project_id,
+        "file_name": file.filename,
+        "rows": len(df),
+        "columns": df.columns.tolist(),
+        "detected_date_col": date_col,
+        "numeric_columns": numeric_cols,
+        "preview": preview["rows"],
+        "dtypes": preview["dtypes"],
+    }
+
+
+# ─── Upload Drivers ────────────────────────────────────────────────────────────
+
+
+@router.post("/upload-drivers")
+async def upload_driver_file(
+    file: UploadFile = File(...),
+    project_id: str | None = None,
+):
+    """Receive an optional CSV/Excel file containing driver / exogenous data."""
+    pid = project_id or str(uuid.uuid4())
+
+    suffix = os.path.splitext(file.filename or ".csv")[1]
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    content = await file.read()
+    tmp.write(content)
+    tmp.close()
+
+    try:
+        df = load_dataframe(tmp.name)
+    except Exception as e:
+        os.unlink(tmp.name)
+        raise HTTPException(status_code=400, detail=f"Failed to parse driver file: {e}")
+
+    date_col = detect_date_column(df)
+    numeric_cols = detect_numeric_columns(df)
+
+    _driver_dataframes[pid] = df
+
+    preview = get_preview(df, n=10)
+
+    return {
+        "project_id": pid,
         "file_name": file.filename,
         "rows": len(df),
         "columns": df.columns.tolist(),
