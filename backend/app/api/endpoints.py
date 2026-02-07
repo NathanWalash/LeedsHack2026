@@ -17,6 +17,7 @@ from app.core.processing import (
     validate_frequency,
     get_data_health,
     load_dataframe,
+    get_preview,
 )
 from app.core.forecasting import run_forecast
 
@@ -25,6 +26,7 @@ router = APIRouter()
 # In-memory stores for demo
 _projects: dict = {}
 _dataframes: dict = {}
+_driver_dataframes: dict = {}  # project_id -> driver DataFrame
 _users: dict = {}  # username -> {password_hash, user_id}
 _user_projects: dict = {}  # user_id -> [project_ids]
 
@@ -76,10 +78,47 @@ class ChatRequest(BaseModel):
 
 # ─── Upload ────────────────────────────────────────────────────────────────────
 
+_ALLOWED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".txt"}
+
+
+def _validate_upload(filename: str | None) -> str:
+    """Return the lowered extension or raise 400 if unsupported."""
+    ext = os.path.splitext(filename or "")[1].lower()
+    if ext not in _ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext}'. Accepted: {', '.join(sorted(_ALLOWED_EXTENSIONS))}",
+        )
+    return ext
+
+
+def _validate_dataframe(df: pd.DataFrame, label: str = "file") -> None:
+    """Sanity-check a parsed DataFrame — reject garbage."""
+    if df.empty:
+        raise HTTPException(status_code=400, detail=f"The {label} appears to be empty after parsing.")
+    if len(df.columns) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The {label} only has {len(df.columns)} column(s). Need at least 2 (e.g. a date and a value).",
+        )
+    if len(df) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The {label} only has {len(df)} row(s) of data. Need at least 3 to be useful.",
+        )
+    # Check that most cells aren't null (a sign of bad parsing)
+    fill_rate = df.notna().mean().mean()
+    if fill_rate < 0.3:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The {label} is mostly empty ({fill_rate:.0%} of cells are filled). It may not be a valid tabular file.",
+        )
+
 
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    """Receive a CSV/Excel file and create a project."""
+    """Receive a CSV/Excel/TXT file and create a project."""
+    _validate_upload(file.filename)
     project_id = str(uuid.uuid4())
 
     # Save file temporarily
@@ -95,6 +134,8 @@ async def upload_file(file: UploadFile = File(...)):
         os.unlink(tmp.name)
         raise HTTPException(status_code=400, detail=f"Failed to parse file: {e}")
 
+    _validate_dataframe(df, "uploaded file")
+
     # Detect date column
     date_col = detect_date_column(df)
     numeric_cols = detect_numeric_columns(df)
@@ -108,6 +149,8 @@ async def upload_file(file: UploadFile = File(...)):
     }
     _dataframes[project_id] = df
 
+    preview = get_preview(df, n=10)
+
     return {
         "project_id": project_id,
         "file_name": file.filename,
@@ -115,6 +158,53 @@ async def upload_file(file: UploadFile = File(...)):
         "columns": df.columns.tolist(),
         "detected_date_col": date_col,
         "numeric_columns": numeric_cols,
+        "preview": preview["rows"],
+        "dtypes": preview["dtypes"],
+    }
+
+
+# ─── Upload Drivers ────────────────────────────────────────────────────────────
+
+
+@router.post("/upload-drivers")
+async def upload_driver_file(
+    file: UploadFile = File(...),
+    project_id: str | None = None,
+):
+    """Receive an optional CSV/Excel/TXT file containing driver / exogenous data."""
+    _validate_upload(file.filename)
+    pid = project_id or str(uuid.uuid4())
+
+    suffix = os.path.splitext(file.filename or ".csv")[1]
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    content = await file.read()
+    tmp.write(content)
+    tmp.close()
+
+    try:
+        df = load_dataframe(tmp.name)
+    except Exception as e:
+        os.unlink(tmp.name)
+        raise HTTPException(status_code=400, detail=f"Failed to parse driver file: {e}")
+
+    _validate_dataframe(df, "driver file")
+
+    date_col = detect_date_column(df)
+    numeric_cols = detect_numeric_columns(df)
+
+    _driver_dataframes[pid] = df
+
+    preview = get_preview(df, n=10)
+
+    return {
+        "project_id": pid,
+        "file_name": file.filename,
+        "rows": len(df),
+        "columns": df.columns.tolist(),
+        "detected_date_col": date_col,
+        "numeric_columns": numeric_cols,
+        "preview": preview["rows"],
+        "dtypes": preview["dtypes"],
     }
 
 
