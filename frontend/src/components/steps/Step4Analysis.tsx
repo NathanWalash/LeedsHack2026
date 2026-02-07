@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useBuildStore } from "@/lib/store";
 import { Button, Badge, Card, CardHeader, CardTitle, CardContent } from "@/components/ui";
 import { getSampleAnalysisBundle, type AnalysisBundle } from "@/lib/api";
-import { AlertCircle, CheckCircle2, FileText, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -53,7 +53,6 @@ const SECTION_OPTIONS: SectionOption[] = [
   { id: "forecast-table", label: "Forecast Table", description: "Raw forecast values", group: "advanced" },
 ];
 
-const CORE_SECTIONS = SECTION_OPTIONS.filter((s) => s.group === "core").map((s) => s.id);
 const ALL_SECTIONS = SECTION_OPTIONS.map((s) => s.id);
 
 type LooseRecord = Record<string, string | number | null | undefined>;
@@ -194,7 +193,7 @@ export default function Step4Analysis() {
   const [analysis, setAnalysis] = useState<AnalysisBundle | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [selectedSections, setSelectedSections] = useState<string[]>(CORE_SECTIONS);
+  const selectedSections = ALL_SECTIONS;
   const [testRange, setTestRange] = useState<{ startTs: number | null; endTs: number | null }>({
     startTs: null,
     endTs: null,
@@ -471,12 +470,8 @@ export default function Step4Analysis() {
 
   const forecastTableRows = useMemo(() => forecastData.slice(0, 8), [forecastData]);
 
-  const toggleSection = (id: string) => {
-    setSelectedSections((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
-  };
-
   const handleContinue = () => {
-    const selectedWidgets = selectedSections
+    const selectedWidgets = ALL_SECTIONS
       .map((id) => {
         const section = SECTION_OPTIONS.find((s) => s.id === id);
         if (!section) return null;
@@ -504,61 +499,32 @@ export default function Step4Analysis() {
   return (
     <div className="space-y-8">
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-4">
-        <h3 className="text-lg font-semibold text-white">Analysis & Results</h3>
-        <p className="text-sm text-slate-400">
-          Pick what to show below. Start with Core sections for a simple view, then add Advanced sections if needed.
-        </p>
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-white">Analysis & Results</h3>
+            <p className="text-sm text-slate-400 mt-1">
+              A fixed walkthrough for non-technical users: check model quality first, then review forecast outputs.
+            </p>
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              <Badge variant={loadError ? "warning" : "success"}>
+                {loadError ? "Partial data loaded" : "Data loaded"}
+              </Badge>
+              <Badge variant="default">Guided flow</Badge>
+            </div>
+          </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="secondary" onClick={() => setSelectedSections(CORE_SECTIONS)}>
-            Core only
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => setSelectedSections(ALL_SECTIONS)}>
-            Show all
-          </Button>
-          <Button size="sm" variant="ghost" onClick={() => setSelectedSections([])}>
-            Clear
-          </Button>
-          <Badge variant={loadError ? "warning" : "success"}>
-            {loadError ? "Partial data" : "Data loaded"}
-          </Badge>
+          <div className="rounded-xl border border-slate-700 bg-slate-900/50 px-4 py-3 min-w-[250px]">
+            <p className="text-xs font-semibold text-slate-300">Flow</p>
+            <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+              <span className="text-slate-200 font-semibold">1.</span> Evaluation and metrics
+            </p>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              <span className="text-slate-200 font-semibold">2.</span> Prediction and forecast
+            </p>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {SECTION_OPTIONS.map((section) => {
-            const active = selectedSections.includes(section.id);
-            return (
-              <button
-                key={section.id}
-                type="button"
-                onClick={() => toggleSection(section.id)}
-                className={`text-left rounded-xl border px-4 py-3 transition-all cursor-pointer ${
-                  active
-                    ? "border-teal-500 bg-teal-500/10"
-                    : "border-slate-700 bg-slate-800/40 hover:border-slate-600"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-white">{section.label}</p>
-                    <p className="text-xs text-slate-400 mt-1">{section.description}</p>
-                  </div>
-                  <div className="shrink-0">
-                    {active ? (
-                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-teal-500 text-black text-xs">
-                        <CheckCircle2 className="w-4 h-4" />
-                      </span>
-                    ) : (
-                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-slate-700 text-slate-400 text-xs">
-                        {section.group === "core" ? "C" : "A"}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </button>
-            );
-          })}
-        </div>
+        
       </div>
 
       {loading && (
@@ -1057,12 +1023,6 @@ export default function Step4Analysis() {
             </Card>
           )}
 
-          {selectedSections.length === 0 && (
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-10 text-center text-slate-500">
-              <FileText className="w-10 h-10 mx-auto mb-3 text-slate-600" />
-              <p>Select at least one section to populate the analysis view.</p>
-            </div>
-          )}
         </div>
       )}
 
@@ -1076,7 +1036,7 @@ export default function Step4Analysis() {
         <Button variant="secondary" onClick={prevStep}>
           {"<- Back"}
         </Button>
-        <Button onClick={handleContinue} disabled={selectedSections.length === 0} size="lg">
+        <Button onClick={handleContinue} size="lg">
           {"Continue to Publish Story ->"}
         </Button>
       </div>
