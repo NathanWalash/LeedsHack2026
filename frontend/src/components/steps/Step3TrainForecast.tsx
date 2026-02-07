@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useBuildStore } from "@/lib/store";
 import { trainModel } from "@/lib/api";
-import { BubbleSelect, Slider, Button } from "@/components/ui";
+import { BubbleSelect, Toggle, Button } from "@/components/ui";
 import {
   Play,
   CheckCircle2,
@@ -12,30 +12,87 @@ import {
 } from "lucide-react";
 
 const BASELINE_OPTIONS = [
-  { id: "linear", label: "Linear Regression", icon: "📏", description: "Simple & fast" },
-  { id: "ridge", label: "Ridge", icon: "🏔️", description: "Regularised linear" },
-  { id: "lasso", label: "Lasso", icon: "🪢", description: "Sparse features" },
+  {
+    id: "lagged_ridge",
+    label: "Lagged Ridge",
+    icon: "🏔️",
+    description: "Lag features with ridge regression",
+  },
+  {
+    id: "seasonal_naive",
+    label: "Seasonal Naive",
+    icon: "🧭",
+    description: "Repeats seasonal pattern",
+  },
 ];
 
 const MV_MODEL_OPTIONS = [
   {
-    id: "histgb",
-    label: "HistGradientBoosting",
+    id: "gbm",
+    label: "Gradient Boosted Machines (GBM)",
     icon: "🌲",
-    description: "Gradient-boosted trees (fast)",
+    description: "Tree boosting with strong baselines",
   },
   {
-    id: "random_forest",
-    label: "Random Forest",
-    icon: "🌳",
-    description: "Ensemble of decision trees",
-  },
-  {
-    id: "xgboost",
+    id: "xgb",
     label: "XGBoost",
     icon: "🚀",
-    description: "Optimised boosting (if installed)",
+    description: "Extreme gradient boosting",
   },
+];
+
+const LAG_CONFIG_OPTIONS = [
+  {
+    id: "1,2,4",
+    label: "Fast [1, 2, 4]",
+    icon: "⚡",
+    description: "Quick baseline with a few lags",
+  },
+  {
+    id: "auto",
+    label: "Auto-select",
+    icon: "🪄",
+    description: "Magic pick from the preset grid",
+  },
+  {
+    id: "1,2,3,4",
+    label: "Dense Short [1, 2, 3, 4]",
+    icon: "🧩",
+    description: "Short-term dynamics",
+  },
+  {
+    id: "1,3,6",
+    label: "Sparser [1, 3, 6]",
+    icon: "🪶",
+    description: "More spaced signals",
+  },
+];
+
+const TEST_WINDOW_OPTIONS = [
+  { id: "24", label: "24 weeks", icon: "🕒" },
+  { id: "36", label: "36 weeks", icon: "🗓️" },
+  { id: "48", label: "48 weeks", icon: "📅" },
+];
+
+const VALIDATION_OPTIONS = [
+  {
+    id: "walk_forward",
+    label: "Walk-forward",
+    icon: "🔁",
+    description: "Rolling origin evaluation",
+  },
+  {
+    id: "single_split",
+    label: "Single split",
+    icon: "🎯",
+    description: "One holdout window",
+  },
+];
+
+const HORIZON_OPTIONS = [
+  { id: "4", label: "4 weeks", icon: "🟢" },
+  { id: "8", label: "8 weeks", icon: "🟡" },
+  { id: "12", label: "12 weeks", icon: "🟠" },
 ];
 
 export default function Step3TrainForecast() {
@@ -44,13 +101,24 @@ export default function Step3TrainForecast() {
     dateCol,
     detectedDateCol,
     targetCol,
-    numericColumns,
+    driverFileName,
+    driverNumericColumns,
     selectedDrivers,
     toggleDriver,
+    calendarFeatures,
+    setCalendarFeatures,
+    holidayFeatures,
+    setHolidayFeatures,
     horizon,
     setHorizon,
-    trainTestSplit,
-    setTrainTestSplit,
+    testWindowWeeks,
+    setTestWindowWeeks,
+    validationMode,
+    setValidationMode,
+    lagConfig,
+    setLagConfig,
+    autoSelectLags,
+    setAutoSelectLags,
     baselineModel,
     setBaselineModel,
     multivariateModel,
@@ -66,13 +134,24 @@ export default function Step3TrainForecast() {
 
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const getApiErrorMessage = (err: unknown) => {
+    if (
+      typeof err === "object" &&
+      err !== null &&
+      "response" in err &&
+      typeof (err as { response?: unknown }).response === "object" &&
+      (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+    ) {
+      return (err as { response: { data: { detail: string } } }).response.data.detail;
+    }
+    return "Training failed.";
+  };
 
-  // derive driver options from numeric columns minus target
-  const driverOptions = numericColumns
-    .filter((c) => c !== targetCol)
-    .map((c) => ({ id: c, label: c, icon: "📊" }));
-
-  const canRun = (dateCol || detectedDateCol) && targetCol && baselineModel;
+  const canRun =
+    (dateCol || detectedDateCol) &&
+    targetCol &&
+    baselineModel &&
+    multivariateModel;
 
   const handleTrain = async () => {
     if (!canRun || !projectId) return;
@@ -86,13 +165,23 @@ export default function Step3TrainForecast() {
         projectId,
         (dateCol || detectedDateCol)!,
         targetCol!,
-        selectedDrivers,
-        horizon
+        {
+          drivers: selectedDrivers,
+          horizon,
+          baselineModel,
+          multivariateModel,
+          lagConfig,
+          autoSelectLags,
+          testWindowWeeks,
+          validationMode,
+          calendarFeatures,
+          holidayFeatures,
+        }
       );
       setForecastResults(result);
       setStatus("success");
-    } catch (err: any) {
-      setErrorMsg(err?.response?.data?.detail || "Training failed.");
+    } catch (err: unknown) {
+      setErrorMsg(getApiErrorMessage(err));
       setStatus("error");
     } finally {
       setLoading(false);
@@ -116,6 +205,9 @@ export default function Step3TrainForecast() {
           options={BASELINE_OPTIONS}
           selected={baselineModel}
           onSelect={setBaselineModel}
+          layout="grid"
+          columns={2}
+          fullWidth
         />
 
         <BubbleSelect
@@ -123,42 +215,101 @@ export default function Step3TrainForecast() {
           options={MV_MODEL_OPTIONS}
           selected={multivariateModel}
           onSelect={setMultivariateModel}
+          layout="grid"
+          columns={2}
+          fullWidth
         />
       </div>
 
-      {/* Driver Selection */}
-      {driverOptions.length > 0 && (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-          <BubbleSelect
-            label="Exogenous Drivers (optional)"
-            options={driverOptions}
-            selected={selectedDrivers}
-            onSelect={toggleDriver}
-            multi
-          />
-        </div>
-      )}
-
-      {/* Parameters */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-6">
-        <h3 className="text-lg font-semibold text-white">Parameters</h3>
-
-        <Slider
-          label={`Forecast Horizon: ${horizon} steps`}
-          min={1}
-          max={52}
-          step={1}
-          value={horizon}
-          onChange={setHorizon}
+      {/* Lag Config */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-4">
+        <h3 className="text-lg font-semibold text-white">Lag Config</h3>
+        <BubbleSelect
+          label="Recommended ranges"
+          options={LAG_CONFIG_OPTIONS}
+          selected={autoSelectLags ? "auto" : lagConfig}
+          onSelect={(value) => {
+            if (value === "auto") {
+              setAutoSelectLags(true);
+              setLagConfig("1,2,4");
+              return;
+            }
+            setAutoSelectLags(false);
+            setLagConfig(value);
+          }}
+          layout="grid"
+          columns={2}
+          fullWidth
         />
+      </div>
 
-        <Slider
-          label={`Train/Test Split: ${trainTestSplit}% train`}
-          min={50}
-          max={95}
-          step={5}
-          value={trainTestSplit}
-          onChange={setTrainTestSplit}
+      {/* Drivers */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-6">
+        <h3 className="text-lg font-semibold text-white">Drivers</h3>
+        {driverFileName ? (
+          <>
+            <p className="text-sm text-slate-400">
+              Driver source: <span className="text-slate-300">{driverFileName}</span>
+            </p>
+            {driverNumericColumns.length > 0 ? (
+              <BubbleSelect
+                label="Select driver columns"
+                options={driverNumericColumns.map((c) => ({
+                  id: c,
+                  label: c,
+                  icon: "📊",
+                }))}
+                selected={selectedDrivers}
+                onSelect={toggleDriver}
+                multi
+              />
+            ) : (
+              <p className="text-sm text-slate-400">
+                No numeric drivers available after processing.
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="text-sm text-slate-400">
+            No driver file uploaded. Training will run on target data only.
+          </p>
+        )}
+        <Toggle
+          checked={calendarFeatures}
+          onChange={setCalendarFeatures}
+          label="Calendar features"
+        />
+        <Toggle
+          checked={holidayFeatures}
+          onChange={setHolidayFeatures}
+          label="Holiday features"
+        />
+      </div>
+
+      {/* Test Window */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-6">
+        <h3 className="text-lg font-semibold text-white">Test Window</h3>
+        <BubbleSelect
+          label="Holdout length"
+          options={TEST_WINDOW_OPTIONS}
+          selected={String(testWindowWeeks)}
+          onSelect={(value) => setTestWindowWeeks(Number(value))}
+        />
+        <BubbleSelect
+          label="Validation mode"
+          options={VALIDATION_OPTIONS}
+          selected={validationMode}
+          onSelect={setValidationMode}
+        />
+      </div>
+
+      {/* Forecast Horizon */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
+        <BubbleSelect
+          label="Forecast horizon"
+          options={HORIZON_OPTIONS}
+          selected={String(horizon)}
+          onSelect={(value) => setHorizon(Number(value))}
         />
       </div>
 
@@ -209,7 +360,7 @@ export default function Step3TrainForecast() {
           disabled={status !== "success"}
           size="lg"
         >
-          Continue to Outputs →
+          Continue to Analysis →
         </Button>
       </div>
     </div>
