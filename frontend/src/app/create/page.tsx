@@ -97,7 +97,7 @@ export default function BuildPage() {
       {/* Main Content */}
       <div className="flex-1 max-w-4xl mx-auto px-6 py-8">
         {/* Step Progress Bar */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="mb-8">
           <StepProgress
             currentStep={currentStep}
             completedSteps={completedSteps}
@@ -105,25 +105,29 @@ export default function BuildPage() {
             onStepClick={setStep}
             debugMode={debugMode}
           />
-          <button
-            onClick={toggleDebug}
-            className={`p-2 rounded-lg transition cursor-pointer ${
-              debugMode
-                ? "bg-amber-900/30 text-amber-400 border border-amber-800"
-                : "text-slate-600 hover:text-slate-400"
-            }`}
-            title="Toggle debug panel"
-          >
-            <Bug className="w-4 h-4" />
-          </button>
+        </div>
+
+        {/* Active Step */}
+        <div className="pb-10">
+          {STEP_COMPONENTS[currentStep]}
         </div>
 
         {/* Debug Panel */}
         {debugMode && <DebugPanel />}
 
-        {/* Active Step */}
-        <div className="pb-16">
-          {STEP_COMPONENTS[currentStep]}
+        <div className="mt-6 flex justify-end border-t border-slate-800 pt-4">
+          <button
+            onClick={toggleDebug}
+            className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-medium transition cursor-pointer ${
+              debugMode
+                ? "bg-amber-900/30 text-amber-400 border border-amber-800"
+                : "text-slate-500 border border-slate-700 hover:text-slate-300 hover:border-slate-600"
+            }`}
+            title="Toggle debug panel"
+          >
+            <Bug className="w-3.5 h-3.5" />
+            Debug
+          </button>
         </div>
       </div>
 
