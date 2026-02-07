@@ -79,17 +79,42 @@ interface BuildState {
   // Step 1: Files
   uploadedFiles: string[];
   addUploadedFile: (name: string) => void;
+  removeUploadedFile: (name: string) => void;
+  clearFileInfo: () => void;
 
   // File analysis results
   columns: string[];
   numericColumns: string[];
   detectedDateCol: string | null;
   rowCount: number;
+  previewData: Record<string, unknown>[];
+  columnDtypes: Record<string, string>;
+
+  // Driver file (optional)
+  driverFileName: string | null;
+  driverColumns: string[];
+  driverNumericColumns: string[];
+  driverDetectedDateCol: string | null;
+  driverRowCount: number;
+  driverPreviewData: Record<string, unknown>[];
+  driverColumnDtypes: Record<string, string>;
+  setDriverInfo: (info: {
+    fileName: string;
+    columns: string[];
+    numericColumns: string[];
+    detectedDateCol: string | null;
+    rowCount: number;
+    previewData?: Record<string, unknown>[];
+    columnDtypes?: Record<string, string>;
+  }) => void;
+  clearDriverInfo: () => void;
   setFileInfo: (info: {
     columns: string[];
     numericColumns: string[];
     detectedDateCol: string | null;
     rowCount: number;
+    previewData?: Record<string, unknown>[];
+    columnDtypes?: Record<string, string>;
   }) => void;
 
   // Step 2: Pipeline config
@@ -168,6 +193,15 @@ const buildInitial = {
   numericColumns: [] as string[],
   detectedDateCol: null as string | null,
   rowCount: 0,
+  previewData: [] as Record<string, unknown>[],
+  columnDtypes: {} as Record<string, string>,
+  driverFileName: null as string | null,
+  driverColumns: [] as string[],
+  driverNumericColumns: [] as string[],
+  driverDetectedDateCol: null as string | null,
+  driverRowCount: 0,
+  driverPreviewData: [] as Record<string, unknown>[],
+  driverColumnDtypes: {} as Record<string, string>,
   dateCol: null as string | null,
   targetCol: null as string | null,
   frequency: "",
@@ -217,7 +251,45 @@ export const useBuildStore = create<BuildState>()((set) => ({
   setProjectDescription: (d) => set({ projectDescription: d }),
   setUseCase: (u) => set({ useCase: u }),
   addUploadedFile: (name) =>
-    set((s) => ({ uploadedFiles: [...s.uploadedFiles, name] })),
+    set((s) => ({
+      uploadedFiles: s.uploadedFiles.includes(name)
+        ? s.uploadedFiles
+        : [name],
+    })),
+  removeUploadedFile: (name) =>
+    set((s) => ({
+      uploadedFiles: s.uploadedFiles.filter((f) => f !== name),
+    })),
+  clearFileInfo: () =>
+    set({
+      columns: [],
+      numericColumns: [],
+      detectedDateCol: null,
+      rowCount: 0,
+      previewData: [],
+      columnDtypes: {},
+    }),
+
+  setDriverInfo: (info) =>
+    set({
+      driverFileName: info.fileName,
+      driverColumns: info.columns,
+      driverNumericColumns: info.numericColumns,
+      driverDetectedDateCol: info.detectedDateCol,
+      driverRowCount: info.rowCount,
+      driverPreviewData: info.previewData || [],
+      driverColumnDtypes: info.columnDtypes || {},
+    }),
+  clearDriverInfo: () =>
+    set({
+      driverFileName: null,
+      driverColumns: [],
+      driverNumericColumns: [],
+      driverDetectedDateCol: null,
+      driverRowCount: 0,
+      driverPreviewData: [],
+      driverColumnDtypes: {},
+    }),
 
   setFileInfo: (info) =>
     set({
@@ -225,6 +297,8 @@ export const useBuildStore = create<BuildState>()((set) => ({
       numericColumns: info.numericColumns,
       detectedDateCol: info.detectedDateCol,
       rowCount: info.rowCount,
+      previewData: info.previewData || [],
+      columnDtypes: info.columnDtypes || {},
     }),
 
   setDateCol: (col) => set({ dateCol: col }),

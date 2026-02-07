@@ -70,6 +70,16 @@ export async function uploadFile(file: File) {
   return res.data;
 }
 
+export async function uploadDriverFile(file: File, projectId?: string) {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (projectId) formData.append("project_id", projectId);
+  const res = await api.post("/upload-drivers", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return res.data;
+}
+
 // ─── Analyze ──────────────────────────────────────────────────────────────────
 
 export async function analyzeData(
