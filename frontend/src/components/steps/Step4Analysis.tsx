@@ -17,6 +17,7 @@ import {
   BarChart,
   Bar,
   ReferenceArea,
+  ReferenceLine,
 } from "recharts";
 
 type SectionOption = {
@@ -156,40 +157,35 @@ function getPrimaryNumericValue(row: LooseRecord): number | null {
   return null;
 }
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
+function getFullRangeFromTimestamps(timestamps: number[]) {
+  if (timestamps.length === 0) return { startTs: null as number | null, endTs: null as number | null };
+  return { startTs: timestamps[0], endTs: timestamps[timestamps.length - 1] };
 }
 
-function computeWindow<T extends { ts: number }>(
+function normalizeRange<T extends { ts: number }>(
   rows: T[],
-  zoomPercent: number,
-  panPercent: number
+  range: { startTs: number | null; endTs: number | null }
 ) {
-  if (rows.length === 0) {
-    return {
-      rows: [] as T[],
-      startTs: null as number | null,
-      endTs: null as number | null,
-      startIndex: 0,
-      endIndex: 0,
-    };
-  }
-
-  const safeZoom = clamp(zoomPercent, 5, 100);
-  const windowSize = clamp(Math.round((rows.length * safeZoom) / 100), 2, rows.length);
-  const maxStart = Math.max(0, rows.length - windowSize);
-  const safePan = clamp(panPercent, 0, 100);
-  const startIndex = Math.round((safePan / 100) * maxStart);
-  const endIndex = startIndex + windowSize - 1;
-  const visibleRows = rows.slice(startIndex, endIndex + 1);
-
+  if (rows.length === 0) return { startTs: null as number | null, endTs: null as number | null };
+  const minTs = rows[0].ts;
+  const maxTs = rows[rows.length - 1].ts;
+  const startTs = range.startTs ?? minTs;
+  const endTs = range.endTs ?? maxTs;
+  if (startTs > endTs) return { startTs: minTs, endTs: maxTs };
   return {
-    rows: visibleRows,
-    startTs: visibleRows[0]?.ts ?? null,
-    endTs: visibleRows[visibleRows.length - 1]?.ts ?? null,
-    startIndex,
-    endIndex,
+    startTs: Math.max(minTs, Math.min(maxTs, startTs)),
+    endTs: Math.max(minTs, Math.min(maxTs, endTs)),
   };
+}
+
+function filterRowsByRange<T extends { ts: number }>(
+  rows: T[],
+  range: { startTs: number | null; endTs: number | null }
+) {
+  if (rows.length === 0) return [] as T[];
+  const normalized = normalizeRange(rows, range);
+  if (normalized.startTs === null || normalized.endTs === null) return rows;
+  return rows.filter((r) => r.ts >= normalized.startTs! && r.ts <= normalized.endTs!);
 }
 
 export default function Step4Analysis() {
@@ -199,14 +195,18 @@ export default function Step4Analysis() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [selectedSections, setSelectedSections] = useState<string[]>(CORE_SECTIONS);
-  const [testZoom, setTestZoom] = useState(35);
-  const [testPan, setTestPan] = useState(100);
-  const [forecastZoom, setForecastZoom] = useState(35);
-  const [forecastPan, setForecastPan] = useState(100);
-  const [driverTempZoom, setDriverTempZoom] = useState(45);
-  const [driverTempPan, setDriverTempPan] = useState(100);
-  const [driverHolidayZoom, setDriverHolidayZoom] = useState(45);
-  const [driverHolidayPan, setDriverHolidayPan] = useState(100);
+  const [testRange, setTestRange] = useState<{ startTs: number | null; endTs: number | null }>({
+    startTs: null,
+    endTs: null,
+  });
+  const [forecastRange, setForecastRange] = useState<{ startTs: number | null; endTs: number | null }>({
+    startTs: null,
+    endTs: null,
+  });
+  const [driverRange, setDriverRange] = useState<{ startTs: number | null; endTs: number | null }>({
+    startTs: null,
+    endTs: null,
+  });
 
   useEffect(() => {
     let mounted = true;
@@ -326,6 +326,7 @@ export default function Step4Analysis() {
         actual: number | null;
         baseline_forecast: number | null;
         multivariate_forecast: number | null;
+        handoff_multivariate: number | null;
       }
     >();
 
@@ -336,6 +337,7 @@ export default function Step4Analysis() {
         actual: row.actual,
         baseline_forecast: null,
         multivariate_forecast: null,
+        handoff_multivariate: null,
       });
     }
 
@@ -351,11 +353,25 @@ export default function Step4Analysis() {
           actual: null,
           baseline_forecast: row.baseline_forecast,
           multivariate_forecast: row.multivariate_forecast,
+          handoff_multivariate: null,
         });
       }
     }
 
-    return Array.from(rows.values()).sort((a, b) => a.ts - b.ts);
+    const sorted = Array.from(rows.values()).sort((a, b) => a.ts - b.ts);
+
+    const lastHistorical = historicalTargetData[historicalTargetData.length - 1];
+    const firstForecast = forecastData[0];
+    if (lastHistorical && firstForecast && firstForecast.ts > lastHistorical.ts) {
+      const left = sorted.find((r) => r.ts === lastHistorical.ts);
+      const right = sorted.find((r) => r.ts === firstForecast.ts);
+      if (left && right && right.multivariate_forecast !== null) {
+        left.handoff_multivariate = left.actual;
+        right.handoff_multivariate = right.multivariate_forecast;
+      }
+    }
+
+    return sorted;
   }, [historicalTargetData, forecastData]);
 
   const featureImportanceData = useMemo(
@@ -405,40 +421,42 @@ export default function Step4Analysis() {
       .sort((a, b) => a.ts - b.ts);
   }, [analysis]);
 
-  const testFitWindow = useMemo(
-    () => computeWindow(testFitCombinedData, testZoom, testPan),
-    [testFitCombinedData, testZoom, testPan]
+  useEffect(() => {
+    setTestRange((prev) => normalizeRange(testFitCombinedData, prev));
+  }, [testFitCombinedData]);
+
+  useEffect(() => {
+    setForecastRange((prev) => normalizeRange(forecastCombinedData, prev));
+  }, [forecastCombinedData]);
+
+  useEffect(() => {
+    setDriverRange((prev) => normalizeRange(driverData, prev));
+  }, [driverData]);
+
+  const testFitVisibleRows = useMemo(
+    () => filterRowsByRange(testFitCombinedData, testRange),
+    [testFitCombinedData, testRange]
   );
-  const forecastWindow = useMemo(
-    () => computeWindow(forecastCombinedData, forecastZoom, forecastPan),
-    [forecastCombinedData, forecastZoom, forecastPan]
+  const forecastVisibleRows = useMemo(
+    () => filterRowsByRange(forecastCombinedData, forecastRange),
+    [forecastCombinedData, forecastRange]
   );
-  const driverTempWindow = useMemo(
-    () => computeWindow(driverData, driverTempZoom, driverTempPan),
-    [driverData, driverTempZoom, driverTempPan]
-  );
-  const driverHolidayWindow = useMemo(
-    () => computeWindow(driverData, driverHolidayZoom, driverHolidayPan),
-    [driverData, driverHolidayZoom, driverHolidayPan]
-  );
+  const driverVisibleRows = useMemo(() => filterRowsByRange(driverData, driverRange), [driverData, driverRange]);
 
   const testFitDomain = useMemo(
-    () => computeDomain(testFitWindow.rows, ["actual", "baseline", "multivariate"]),
-    [testFitWindow.rows]
+    () => computeDomain(testFitVisibleRows, ["actual", "baseline", "multivariate"]),
+    [testFitVisibleRows]
   );
   const forecastDomain = useMemo(
-    () => computeDomain(forecastWindow.rows, ["actual", "baseline_forecast", "multivariate_forecast"]),
-    [forecastWindow.rows]
+    () => computeDomain(forecastVisibleRows, ["actual", "baseline_forecast", "multivariate_forecast"]),
+    [forecastVisibleRows]
   );
   const errorDomain = useMemo(
     () => computeDomain(errorTrendData, ["baseline_error", "multivariate_error"], true),
     [errorTrendData]
   );
-  const tempDomain = useMemo(() => computeDomain(driverTempWindow.rows, ["temp_mean"]), [driverTempWindow.rows]);
-  const holidayDomain = useMemo(
-    () => computeDomain(driverHolidayWindow.rows, ["holiday_count"], true),
-    [driverHolidayWindow.rows]
-  );
+  const tempDomain = useMemo(() => computeDomain(driverVisibleRows, ["temp_mean"]), [driverVisibleRows]);
+  const holidayDomain = useMemo(() => computeDomain(driverVisibleRows, ["holiday_count"], true), [driverVisibleRows]);
   const testWindowStartTs = testFitData.length > 0 ? testFitData[0].ts : null;
   const testWindowEndTs = testFitData.length > 0 ? testFitData[testFitData.length - 1].ts : null;
   const forecastWindowStartTs = forecastData.length > 0 ? forecastData[0].ts : null;
@@ -558,20 +576,27 @@ export default function Step4Analysis() {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
-                  <InfoCard label="Target" value={analysis.manifest.data_summary.target_name} />
+                  <InfoCard
+                    label="Target"
+                    value={analysis.manifest.data_summary.target_name}
+                    help="This is the thing we are trying to predict each week."
+                  />
                   <InfoCard
                     label="Date range"
                     value={`${analysis.manifest.data_summary.start} to ${analysis.manifest.data_summary.end}`}
+                    help="This is the period used for training and evaluation."
                   />
                   <InfoCard
                     label="Rows and freq"
                     value={`${analysis.manifest.data_summary.rows} rows, ${analysis.manifest.data_summary.freq}`}
+                    help="Rows are weekly points. More rows generally means more stable training."
                   />
                   <InfoCard
                     label="Models"
                     value={`${String(analysis.manifest.settings.baseline_model)} + ${String(
                       analysis.manifest.settings.multi_model
                     )}`}
+                    help="Baseline is the simpler reference model. Multivariate uses extra driver signals."
                   />
                 </div>
               </CardContent>
@@ -579,14 +604,34 @@ export default function Step4Analysis() {
           )}
 
           {selectedSections.includes("metrics") && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <KpiCard title="Baseline RMSE" value={fmt.format(analysis.manifest.metrics.baseline_rmse)} tone="neutral" />
-              <KpiCard
-                title="Multivariate RMSE"
-                value={fmt.format(analysis.manifest.metrics.multivariate_rmse)}
-                tone="success"
-              />
-              <KpiCard title="Improvement" value={`${pct.format(analysis.manifest.metrics.improvement_pct)}%`} tone="success" />
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <KpiCard
+                  title="Baseline RMSE"
+                  value={fmt.format(analysis.manifest.metrics.baseline_rmse)}
+                  tone="neutral"
+                  explanation="Average prediction error size for the baseline model. Lower is better."
+                />
+                <KpiCard
+                  title="Multivariate RMSE"
+                  value={fmt.format(analysis.manifest.metrics.multivariate_rmse)}
+                  tone="success"
+                  explanation="Average prediction error size for the advanced model. Lower is better."
+                />
+                <KpiCard
+                  title="Improvement"
+                  value={`${pct.format(analysis.manifest.metrics.improvement_pct)}%`}
+                  tone="success"
+                  explanation="How much the multivariate model reduced RMSE compared with baseline."
+                />
+              </div>
+              <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3">
+                <p className="text-xs font-semibold text-slate-300">Simple reading guide</p>
+                <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                  Lower RMSE means the model is usually closer to the real weekly value. A positive improvement means
+                  the multivariate model performed better than baseline on the test period.
+                </p>
+              </div>
             </div>
           )}
 
@@ -603,14 +648,14 @@ export default function Step4Analysis() {
                   Y-axis: {targetLabel} count. Baseline and multivariate lines are only shown in the test window.
                 </p>
                 <p className="text-xs text-slate-500 mb-3">
-                  Use the View Window sliders to zoom and pan across time.
+                  Use Start and End selectors to focus on the period you want to inspect.
                 </p>
                 {testFitCombinedData.length === 0 ? (
                   <EmptyState text="No test_predictions data found." />
                 ) : (
                   <div className="space-y-3">
                     <ChartWrap>
-                      <LineChart data={testFitWindow.rows}>
+                      <LineChart data={testFitVisibleRows}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                         <XAxis
                           dataKey="ts"
@@ -654,13 +699,9 @@ export default function Step4Analysis() {
                     </ChartWrap>
                     <TimelineControls
                       title="View Window"
-                      zoom={testZoom}
-                      pan={testPan}
-                      onZoom={setTestZoom}
-                      onPan={setTestPan}
-                      fromTs={testFitWindow.startTs}
-                      toTs={testFitWindow.endTs}
-                      disablePan={testFitWindow.rows.length === testFitCombinedData.length}
+                      timestamps={testFitCombinedData.map((r) => r.ts)}
+                      range={testRange}
+                      onRangeChange={setTestRange}
                     />
                   </div>
                 )}
@@ -761,14 +802,14 @@ export default function Step4Analysis() {
                   forward.
                 </p>
                 <p className="text-xs text-slate-500 mb-3">
-                  Use the View Window sliders to zoom and pan, then inspect the right-hand forecast region in detail.
+                  Use Start and End selectors to focus on just the forecast period or keep the full timeline.
                 </p>
                 {forecastCombinedData.length === 0 ? (
                   <EmptyState text="No forecast data found." />
                 ) : (
                   <div className="space-y-3">
                     <ChartWrap>
-                      <LineChart data={forecastWindow.rows}>
+                      <LineChart data={forecastVisibleRows}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                         <XAxis
                           dataKey="ts"
@@ -797,6 +838,20 @@ export default function Step4Analysis() {
                             ifOverflow="extendDomain"
                           />
                         )}
+                        {forecastWindowStartTs !== null && (
+                          <ReferenceLine
+                            x={forecastWindowStartTs}
+                            stroke="#22c55e"
+                            strokeDasharray="5 4"
+                            ifOverflow="extendDomain"
+                            label={{
+                              value: "forecast starts",
+                              fill: "#86efac",
+                              fontSize: 10,
+                              position: "insideTopRight",
+                            }}
+                          />
+                        )}
                         <Line
                           type="monotone"
                           dataKey="actual"
@@ -814,17 +869,22 @@ export default function Step4Analysis() {
                           dot={false}
                           strokeWidth={2}
                         />
+                        <Line
+                          type="monotone"
+                          dataKey="handoff_multivariate"
+                          name="handoff"
+                          stroke="#22c55e"
+                          dot={false}
+                          strokeDasharray="4 4"
+                          connectNulls
+                        />
                       </LineChart>
                     </ChartWrap>
                     <TimelineControls
                       title="View Window"
-                      zoom={forecastZoom}
-                      pan={forecastPan}
-                      onZoom={setForecastZoom}
-                      onPan={setForecastPan}
-                      fromTs={forecastWindow.startTs}
-                      toTs={forecastWindow.endTs}
-                      disablePan={forecastWindow.rows.length === forecastCombinedData.length}
+                      timestamps={forecastCombinedData.map((r) => r.ts)}
+                      range={forecastRange}
+                      onRangeChange={setForecastRange}
                     />
                   </div>
                 )}
@@ -847,7 +907,7 @@ export default function Step4Analysis() {
                   ) : (
                     <div className="space-y-3">
                       <ChartWrap>
-                        <LineChart data={driverTempWindow.rows}>
+                        <LineChart data={driverVisibleRows}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                           <XAxis
                             dataKey="ts"
@@ -876,13 +936,9 @@ export default function Step4Analysis() {
                       </ChartWrap>
                       <TimelineControls
                         title="View Window"
-                        zoom={driverTempZoom}
-                        pan={driverTempPan}
-                        onZoom={setDriverTempZoom}
-                        onPan={setDriverTempPan}
-                        fromTs={driverTempWindow.startTs}
-                        toTs={driverTempWindow.endTs}
-                        disablePan={driverTempWindow.rows.length === driverData.length}
+                        timestamps={driverData.map((r) => r.ts)}
+                        range={driverRange}
+                        onRangeChange={setDriverRange}
                       />
                     </div>
                   )}
@@ -902,7 +958,7 @@ export default function Step4Analysis() {
                   ) : (
                     <div className="space-y-3">
                       <ChartWrap>
-                        <BarChart data={driverHolidayWindow.rows}>
+                        <BarChart data={driverVisibleRows}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                           <XAxis
                             dataKey="ts"
@@ -927,13 +983,9 @@ export default function Step4Analysis() {
                       </ChartWrap>
                       <TimelineControls
                         title="View Window"
-                        zoom={driverHolidayZoom}
-                        pan={driverHolidayPan}
-                        onZoom={setDriverHolidayZoom}
-                        onPan={setDriverHolidayPan}
-                        fromTs={driverHolidayWindow.startTs}
-                        toTs={driverHolidayWindow.endTs}
-                        disablePan={driverHolidayWindow.rows.length === driverData.length}
+                        timestamps={driverData.map((r) => r.ts)}
+                        range={driverRange}
+                        onRangeChange={setDriverRange}
                       />
                     </div>
                   )}
@@ -1013,65 +1065,89 @@ function ChartWrap({ children, height = 320 }: { children: React.ReactNode; heig
 
 function TimelineControls({
   title,
-  zoom,
-  pan,
-  onZoom,
-  onPan,
-  fromTs,
-  toTs,
-  disablePan,
+  timestamps,
+  range,
+  onRangeChange,
 }: {
   title: string;
-  zoom: number;
-  pan: number;
-  onZoom: (value: number) => void;
-  onPan: (value: number) => void;
-  fromTs: number | null;
-  toTs: number | null;
-  disablePan: boolean;
+  timestamps: number[];
+  range: { startTs: number | null; endTs: number | null };
+  onRangeChange: (next: { startTs: number | null; endTs: number | null }) => void;
 }) {
+  const options = useMemo(
+    () => timestamps.map((ts) => ({ value: ts, label: formatShortDateFromTs(ts) })),
+    [timestamps]
+  );
+  const startTs = range.startTs ?? (timestamps.length > 0 ? timestamps[0] : null);
+  const endTs = range.endTs ?? (timestamps.length > 0 ? timestamps[timestamps.length - 1] : null);
+
+  const setStart = (nextStart: number) => {
+    if (endTs !== null && nextStart > endTs) {
+      onRangeChange({ startTs: nextStart, endTs: nextStart });
+      return;
+    }
+    onRangeChange({ startTs: nextStart, endTs });
+  };
+
+  const setEnd = (nextEnd: number) => {
+    if (startTs !== null && nextEnd < startTs) {
+      onRangeChange({ startTs: nextEnd, endTs: nextEnd });
+      return;
+    }
+    onRangeChange({ startTs, endTs: nextEnd });
+  };
+
   return (
     <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3 space-y-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-semibold text-slate-300">{title}</p>
         <p className="text-xs text-slate-400">
-          {fromTs !== null && toTs !== null
-            ? `${formatShortDateFromTs(fromTs)} to ${formatShortDateFromTs(toTs)}`
+          {startTs !== null && endTs !== null
+            ? `${formatShortDateFromTs(startTs)} to ${formatShortDateFromTs(endTs)}`
             : "No range"}
         </p>
       </div>
 
-      <div className="space-y-1">
-        <div className="flex items-center justify-between text-xs text-slate-400">
-          <span>Zoom</span>
-          <span>{zoom}% visible</span>
-        </div>
-        <input
-          type="range"
-          min={5}
-          max={100}
-          step={1}
-          value={zoom}
-          onChange={(e) => onZoom(Number(e.target.value))}
-          className="w-full h-2 rounded-lg bg-slate-700 accent-teal-500 cursor-pointer"
-        />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <label className="text-xs text-slate-400 flex flex-col gap-1">
+          Start
+          <select
+            value={startTs !== null ? String(startTs) : ""}
+            onChange={(e) => setStart(Number(e.target.value))}
+            className="rounded-lg border border-slate-600 bg-slate-800 px-2 py-1.5 text-xs text-slate-200"
+          >
+            {options.map((opt) => (
+              <option key={`start-${opt.value}`} value={String(opt.value)}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="text-xs text-slate-400 flex flex-col gap-1">
+          End
+          <select
+            value={endTs !== null ? String(endTs) : ""}
+            onChange={(e) => setEnd(Number(e.target.value))}
+            className="rounded-lg border border-slate-600 bg-slate-800 px-2 py-1.5 text-xs text-slate-200"
+          >
+            {options.map((opt) => (
+              <option key={`end-${opt.value}`} value={String(opt.value)}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
-      <div className="space-y-1">
-        <div className="flex items-center justify-between text-xs text-slate-400">
-          <span>Pan</span>
-          <span>{pan}%</span>
-        </div>
-        <input
-          type="range"
-          min={0}
-          max={100}
-          step={1}
-          value={pan}
-          onChange={(e) => onPan(Number(e.target.value))}
-          disabled={disablePan}
-          className="w-full h-2 rounded-lg bg-slate-700 accent-teal-400 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-        />
+      <div className="flex justify-end">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => onRangeChange(getFullRangeFromTimestamps(timestamps))}
+        >
+          Reset to Full Range
+        </Button>
       </div>
     </div>
   );
@@ -1081,10 +1157,12 @@ function KpiCard({
   title,
   value,
   tone,
+  explanation,
 }: {
   title: string;
   value: string;
   tone: "neutral" | "success";
+  explanation?: string;
 }) {
   return (
     <div
@@ -1106,15 +1184,17 @@ function KpiCard({
           <span className="text-slate-500">Reference metric</span>
         )}
       </div>
+      {explanation && <p className="text-xs text-slate-400 mt-2 leading-relaxed">{explanation}</p>}
     </div>
   );
 }
 
-function InfoCard({ label, value }: { label: string; value: string }) {
+function InfoCard({ label, value, help }: { label: string; value: string; help?: string }) {
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900/40 px-4 py-3">
       <p className="text-xs text-slate-500">{label}</p>
       <p className="text-sm text-slate-200 mt-1">{value}</p>
+      {help && <p className="text-xs text-slate-500 mt-2 leading-relaxed">{help}</p>}
     </div>
   );
 }
