@@ -9,6 +9,7 @@ import hashlib
 import tempfile
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 from fastapi import APIRouter, UploadFile, File, HTTPException
 import pandas as pd
@@ -40,6 +41,71 @@ _analysis_dir = Path(__file__).resolve().parent.parent / "outputs_temp"
 
 def _hash_pw(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _username_for_user_id(user_id: str | None) -> str:
+    if not user_id:
+        return "anonymous"
+    for username, payload in _users.items():
+        if payload.get("user_id") == user_id:
+            return username
+    return "anonymous"
+
+
+def _string_list(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    items: list[str] = []
+    for item in raw:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if text:
+            items.append(text)
+    return items
+
+
+def _story_card(project: dict[str, Any]) -> dict[str, Any]:
+    config = project.get("config") if isinstance(project.get("config"), dict) else {}
+    categories = _string_list(config.get("categories"))
+    notebook_blocks = config.get("notebook_blocks")
+    block_count = len(notebook_blocks) if isinstance(notebook_blocks, list) else 0
+    author = _username_for_user_id(project.get("user_id"))
+    if author == "anonymous":
+        config_author = str(config.get("author_username") or "").strip()
+        if config_author:
+            author = config_author
+    cover_graph = None
+    if isinstance(notebook_blocks, list):
+        for block in notebook_blocks:
+            if isinstance(block, dict) and block.get("type") == "graph":
+                cover_graph = block.get("assetId")
+                break
+
+    return {
+        "story_id": project.get("project_id"),
+        "project_id": project.get("project_id"),
+        "title": config.get("headline") or project.get("title") or "Untitled Story",
+        "description": config.get("description") or project.get("description") or "",
+        "author": author,
+        "user_id": project.get("user_id"),
+        "categories": categories,
+        "published_at": project.get("published_at"),
+        "created_at": project.get("created_at"),
+        "use_case": project.get("use_case") or "",
+        "horizon": config.get("horizon"),
+        "baseline_model": config.get("baselineModel"),
+        "multivariate_model": config.get("multivariateModel"),
+        "drivers": _string_list(config.get("drivers")),
+        "block_count": block_count,
+        "cover_graph": cover_graph,
+        "source": "user",
+        "is_debug": False,
+    }
 
 
 def _resolve_analysis_path(path_value: str, fallback: str) -> Path:
@@ -462,6 +528,7 @@ async def login(req: AuthRequest):
 async def create_project(req: ProjectCreateRequest):
     """Create a new project for a user."""
     project_id = str(uuid.uuid4())
+    now = _now_iso()
     project = {
         "project_id": project_id,
         "user_id": req.user_id,
@@ -473,6 +540,9 @@ async def create_project(req: ProjectCreateRequest):
         "config": {},
         "files": [],
         "status": "draft",
+        "created_at": now,
+        "updated_at": now,
+        "published_at": None,
     }
     _projects[project_id] = project
 
@@ -501,6 +571,56 @@ async def get_project(project_id: str):
     return project
 
 
+@router.get("/stories")
+async def list_stories(search: str | None = None, category: str | None = None):
+    """List published stories for Explore feed."""
+    term = (search or "").strip().lower()
+    wanted_category = (category or "").strip().lower()
+
+    stories: list[dict[str, Any]] = []
+    for project in _projects.values():
+        if project.get("status") != "published":
+            continue
+        card = _story_card(project)
+
+        if term:
+            haystack = " ".join(
+                [
+                    str(card.get("title", "")),
+                    str(card.get("description", "")),
+                    str(card.get("author", "")),
+                    " ".join(card.get("categories", [])),
+                ]
+            ).lower()
+            if term not in haystack:
+                continue
+
+        if wanted_category:
+            categories = [c.lower() for c in card.get("categories", [])]
+            if wanted_category not in categories:
+                continue
+
+        stories.append(card)
+
+    stories.sort(key=lambda s: s.get("published_at") or "", reverse=True)
+    return {"stories": stories, "total": len(stories)}
+
+
+@router.get("/stories/{story_id}")
+async def get_story(story_id: str):
+    """Get full story payload for detail page."""
+    project = _projects.get(story_id)
+    if not project or project.get("status") != "published":
+        raise HTTPException(status_code=404, detail="Story not found")
+
+    config = project.get("config") if isinstance(project.get("config"), dict) else {}
+    return {
+        **_story_card(project),
+        "notebook_blocks": config.get("notebook_blocks", []),
+        "publish_mode": config.get("publish_mode", "live"),
+    }
+
+
 @router.post("/projects/update")
 async def update_project(req: ProjectUpdateRequest):
     """Update project step or config."""
@@ -515,5 +635,17 @@ async def update_project(req: ProjectUpdateRequest):
 
     if req.config is not None:
         project.setdefault("config", {}).update(req.config)
+        if not project.get("user_id"):
+            author_user_id = req.config.get("author_user_id")
+            if isinstance(author_user_id, str) and author_user_id.strip():
+                project["user_id"] = author_user_id.strip()
+        if bool(req.config.get("published")):
+            project["status"] = "published"
+            project["published_at"] = project.get("published_at") or _now_iso()
+        elif req.config.get("published") is False:
+            project["status"] = "draft"
+            project["published_at"] = None
+
+    project["updated_at"] = _now_iso()
 
     return project

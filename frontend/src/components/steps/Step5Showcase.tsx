@@ -2,8 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useBuildStore, useAuthStore } from "@/lib/store";
-import { getSampleAnalysisBundle, type AnalysisBundle, updateProject } from "@/lib/api";
-import { Badge, BubbleSelect, Button, Input, Textarea } from "@/components/ui";
+import {
+  createProject,
+  getSampleAnalysisBundle,
+  type AnalysisBundle,
+  updateProject,
+} from "@/lib/api";
+import { Badge, Button, Input, Textarea } from "@/components/ui";
 import {
   ArrowDown,
   ArrowLeft,
@@ -11,6 +16,7 @@ import {
   BarChart3,
   Briefcase,
   CalendarDays,
+  Check,
   CircleDollarSign,
   Eye,
   GripVertical,
@@ -147,10 +153,12 @@ const formatDecimal = (value: number, maxFractionDigits = 2) =>
   new Intl.NumberFormat("en-GB", { maximumFractionDigits: maxFractionDigits }).format(value);
 const id = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 const styleLabel = (style: TextStyle) => TEXT_PRESETS.find((p) => p.value === style)?.label || "Text";
+const categoryMeta = (id: string) => CATEGORY_OPTIONS.find((opt) => opt.id === id);
 
 export default function Step5Showcase() {
   const {
     projectId,
+    setProjectId,
     projectTitle,
     projectDescription,
     useCase,
@@ -177,6 +185,7 @@ export default function Step5Showcase() {
   const [blocks, setBlocks] = useState<NotebookBlock[]>([]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [publishError, setPublishError] = useState("");
   const [published, setPublished] = useState(false);
 
   useEffect(() => {
@@ -600,27 +609,83 @@ export default function Step5Showcase() {
   };
 
   const handlePublish = async () => {
+    setPublishError("");
     setLoading(true);
-    try {
-      if (projectId) {
-        await updateProject(projectId, 5, {
-          headline,
-          description: summary,
-          categories: tags,
-          notebook_blocks: blocks,
-          published: true,
-          publish_mode: "stub",
-          horizon,
-          drivers: selectedDrivers,
-          baselineModel,
-          multivariateModel,
-        });
+
+    const payload = {
+      headline,
+      description: summary,
+      categories: tags,
+      notebook_blocks: blocks,
+      published: true,
+      publish_mode: "live",
+      author_user_id: user?.user_id || null,
+      author_username: user?.username || null,
+      horizon,
+      drivers: selectedDrivers,
+      baselineModel,
+      multivariateModel,
+    };
+
+    const getErrDetail = (err: unknown) =>
+      typeof err === "object" &&
+      err !== null &&
+      "response" in err &&
+      typeof (err as { response?: { data?: { detail?: string } } }).response?.data?.detail === "string"
+        ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+        : null;
+
+    const ensureProjectId = async () => {
+      if (projectId) return projectId;
+      if (!user) {
+        throw new Error("Please sign in before publishing so we can save your story.");
       }
+      const created = await createProject(
+        user.user_id,
+        headline.trim() || projectTitle || "Forecast Notebook Post",
+        summary || projectDescription || "",
+        useCase || ""
+      );
+      setProjectId(created.project_id);
+      return created.project_id as string;
+    };
+
+    try {
+      let targetProjectId = await ensureProjectId();
+
+      try {
+        await updateProject(targetProjectId, 5, payload);
+      } catch (err: unknown) {
+        const status =
+          typeof err === "object" &&
+          err !== null &&
+          "response" in err &&
+          typeof (err as { response?: { status?: number } }).response?.status === "number"
+            ? (err as { response?: { status?: number } }).response?.status
+            : null;
+
+        if (status === 404 && user) {
+          // Backend store may have restarted and lost the in-memory project.
+          const recreated = await createProject(
+            user.user_id,
+            headline.trim() || projectTitle || "Forecast Notebook Post",
+            summary || projectDescription || "",
+            useCase || ""
+          );
+          targetProjectId = recreated.project_id as string;
+          setProjectId(targetProjectId);
+          await updateProject(targetProjectId, 5, payload);
+        } else {
+          throw err;
+        }
+      }
+
       completeStep(5);
       setPublished(true);
-    } catch {
-      completeStep(5);
-      setPublished(true);
+    } catch (err: unknown) {
+      setPublishError(
+        getErrDetail(err) || (err instanceof Error ? err.message : "Publishing failed. Please try again.")
+      );
     } finally {
       setLoading(false);
     }
@@ -633,7 +698,7 @@ export default function Step5Showcase() {
         <h2 className="text-3xl font-bold text-white mb-3">Notebook Story Published</h2>
         <p className="text-slate-400 max-w-lg mb-8">&ldquo;{headline || projectTitle || "Forecast Notebook Post"}&rdquo; is ready.</p>
         <div className="flex gap-3">
-          <Button variant="secondary" onClick={() => (window.location.href = "/explore")}>View Explore (stub)</Button>
+          <Button variant="secondary" onClick={() => (window.location.href = "/explore")}>View Explore</Button>
           <Button onClick={() => (window.location.href = "/create")}>Build Another</Button>
         </div>
       </div>
@@ -662,7 +727,59 @@ export default function Step5Showcase() {
           </div>
           <Input label="Headline" value={headline} onChange={(e) => setHeadline(e.target.value)} />
           <Textarea label="Description" value={summary} onChange={(e) => setSummary(e.target.value)} rows={4} />
-          <BubbleSelect label="Categories" options={CATEGORY_OPTIONS} selected={tags} onSelect={(id) => setTags(tags.includes(id) ? tags.filter((t) => t !== id) : [...tags, id])} multi />
+          <div className="space-y-3">
+            <div>
+              <p className="text-sm font-medium text-slate-300">Categories</p>
+              <p className="text-xs text-slate-500 mt-1">Choose one or more tags so people can find your post on Explore.</p>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {CATEGORY_OPTIONS.map((option) => {
+                const active = tags.includes(option.id);
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() =>
+                      setTags(active ? tags.filter((t) => t !== option.id) : [...tags, option.id])
+                    }
+                    className={`rounded-xl border px-3 py-2.5 text-left transition cursor-pointer ${
+                      active
+                        ? "border-teal-500 bg-teal-500/10 text-teal-200"
+                        : "border-slate-700 bg-slate-800/40 text-slate-300 hover:border-slate-600"
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-2 text-sm font-medium">
+                      <span className={active ? "text-teal-300" : "text-slate-400"}>{option.icon}</span>
+                      {option.label}
+                    </span>
+                    <span className="block text-[11px] mt-1 text-slate-500">
+                      {active ? "Selected" : "Tap to add"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {tags.length === 0 ? (
+                <span className="text-xs text-slate-500">No categories selected yet.</span>
+              ) : (
+                tags.map((tag) => {
+                  const meta = categoryMeta(tag);
+                  return (
+                    <span
+                      key={tag}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-teal-800 bg-teal-900/20 px-2.5 py-1 text-xs text-teal-200"
+                    >
+                      {meta?.icon || <Check className="w-3 h-3" />}
+                      {meta?.label || tag}
+                    </span>
+                  );
+                })
+              )}
+            </div>
+          </div>
           {notice && <p className="text-xs text-teal-300">{notice}</p>}
         </div>
       )}
@@ -725,7 +842,7 @@ export default function Step5Showcase() {
 
       {stage === "preview" && (
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-5">
-          <div className="flex items-center justify-between"><h4 className="text-white font-semibold text-base">Step 3: Preview and Publish</h4><Badge variant="warning">Publish is stubbed</Badge></div>
+          <div className="flex items-center justify-between"><h4 className="text-white font-semibold text-base">Step 3: Preview and Publish</h4><Badge variant="success">Publishes to Explore</Badge></div>
           <div className="rounded-xl border border-slate-700 bg-slate-950/50 p-5 space-y-4">
             <h5 className="text-2xl font-bold text-white">{headline || "Untitled Story"}</h5>
             <p className="text-sm text-slate-300">{summary}</p>
@@ -752,6 +869,11 @@ export default function Step5Showcase() {
           )}
         </div>
       </div>
+      {publishError && (
+        <div className="rounded-xl border border-amber-800 bg-amber-950/20 px-4 py-3 text-sm text-amber-300">
+          {publishError}
+        </div>
+      )}
     </div>
   );
 }

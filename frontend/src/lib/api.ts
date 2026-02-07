@@ -202,3 +202,72 @@ export async function getSampleAnalysisBundle(): Promise<AnalysisBundle> {
   const res = await api.get("/analysis/sample");
   return res.data as AnalysisBundle;
 }
+
+export type StoryTextStyle = "h1" | "h2" | "h3" | "body" | "bullets";
+export type StoryGraphAssetId =
+  | "future-forecast"
+  | "test-fit"
+  | "error-trend"
+  | "driver-series"
+  | "feature-importance";
+
+export type StoryNotebookBlock =
+  | {
+      id: string;
+      type: "text";
+      style: StoryTextStyle;
+      content: string;
+    }
+  | {
+      id: string;
+      type: "graph";
+      assetId: StoryGraphAssetId;
+      title: string;
+      caption: string;
+      windowStartTs: number | null;
+      windowEndTs: number | null;
+    };
+
+export interface StoryCard {
+  story_id: string;
+  project_id: string;
+  title: string;
+  description: string;
+  author: string;
+  user_id: string;
+  categories: string[];
+  published_at: string | null;
+  created_at: string | null;
+  use_case: string;
+  horizon: number | null;
+  baseline_model: string | null;
+  multivariate_model: string | null;
+  drivers: string[];
+  block_count: number;
+  cover_graph: StoryGraphAssetId | null;
+  source: "user" | "debug";
+  is_debug: boolean;
+}
+
+export interface StoryDetail extends StoryCard {
+  notebook_blocks: StoryNotebookBlock[];
+  publish_mode: string;
+}
+
+export async function listStories(params?: {
+  search?: string;
+  category?: string;
+}): Promise<{ stories: StoryCard[]; total: number }> {
+  const res = await api.get("/stories", {
+    params: {
+      search: params?.search || undefined,
+      category: params?.category || undefined,
+    },
+  });
+  return res.data as { stories: StoryCard[]; total: number };
+}
+
+export async function getStory(storyId: string): Promise<StoryDetail> {
+  const res = await api.get(`/stories/${storyId}`);
+  return res.data as StoryDetail;
+}
