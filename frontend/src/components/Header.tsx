@@ -8,7 +8,7 @@ import { BarChart3, LogOut, User } from "lucide-react";
 
 const NAV_ITEMS = [
   { href: "/", label: "Home" },
-  { href: "/build", label: "Build" },
+  { href: "/create", label: "Build" },
   { href: "/explore", label: "Explore" },
   { href: "/about", label: "About Us" },
 ];

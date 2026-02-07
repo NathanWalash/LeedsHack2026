@@ -30,7 +30,7 @@ export default function LoginPage() {
       }
       const res = await loginUser(username, password);
       setUser({ user_id: res.user_id, username: res.username });
-      router.push("/build");
+      router.push("/create");
     } catch (err: any) {
       setError(
         err?.response?.data?.detail ?? "Something went wrong. Try again."
