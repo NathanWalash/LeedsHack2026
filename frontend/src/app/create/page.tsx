@@ -49,6 +49,10 @@ export default function BuildPage() {
   const isDraggingRef = useRef(false);
 
   useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [currentStep]);
+
+  useEffect(() => {
     const savedWidth = window.localStorage.getItem("forecast-buddy-chat-width");
     if (!savedWidth) return;
     const parsed = Number(savedWidth);

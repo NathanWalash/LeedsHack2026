@@ -1,0 +1,33 @@
+{
+  "generated_at": "2026-02-07T22:14:39.035626",
+  "settings": {
+    "baseline_model": "lagged_ridge",
+    "multivariate_model": "gbm",
+    "lags": [
+      1,
+      2,
+      4
+    ],
+    "test_window_weeks": 48,
+    "validation_mode": "walk_forward",
+    "forecast_horizon": 8,
+    "calendar_features": false,
+    "auto_select_lags": false
+  },
+  "metrics": {
+    "baseline_rmse": 11396.563671067504,
+    "baseline_mae": 8884.670733580924,
+    "baseline_walk_forward_rmse": 12431.71303838271,
+    "multivariate_rmse": 13268.29306887249,
+    "multivariate_mae": 9824.70847916169,
+    "multivariate_walk_forward_rmse": 13819.823142082287,
+    "improvement_pct": -16.423629541567443
+  },
+  "outputs": {
+    "forecast_csv": "/Users/kian/Desktop/New Folder With Items 2/University Work Y2/Hackathon Final /LeedsHack2026/backend/app/outputs/forecast.csv",
+    "test_predictions_csv": "/Users/kian/Desktop/New Folder With Items 2/University Work Y2/Hackathon Final /LeedsHack2026/backend/app/outputs/artifacts/test_predictions.csv",
+    "feature_importance_csv": "/Users/kian/Desktop/New Folder With Items 2/University Work Y2/Hackathon Final /LeedsHack2026/backend/app/outputs/artifacts/feature_importance.csv",
+    "feature_frame_csv": "/Users/kian/Desktop/New Folder With Items 2/University Work Y2/Hackathon Final /LeedsHack2026/backend/app/outputs/artifacts/feature_frame.csv",
+    "analysis_json": "/Users/kian/Desktop/New Folder With Items 2/University Work Y2/Hackathon Final /LeedsHack2026/backend/app/outputs/analysis_result.json"
+  }
+}
