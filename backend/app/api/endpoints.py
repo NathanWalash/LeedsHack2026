@@ -10,6 +10,7 @@ import tempfile
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from pathlib import Path
 from pydantic import BaseModel
+import pandas as pd
 
 from app.core.processing import (
     detect_date_column,
@@ -20,7 +21,6 @@ from app.core.processing import (
     get_preview,
 )
 from app.core.training import train_and_forecast
-from app.core.forecasting import run_forecast
 from app.core.preprocessing import clean_dataframe_for_training
 
 router = APIRouter()
