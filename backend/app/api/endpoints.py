@@ -8,8 +8,8 @@ import uuid
 import hashlib
 import tempfile
 from fastapi import APIRouter, UploadFile, File, HTTPException
+from pathlib import Path
 from pydantic import BaseModel
-import pandas as pd
 
 from app.core.processing import (
     detect_date_column,
@@ -18,7 +18,7 @@ from app.core.processing import (
     get_data_health,
     load_dataframe,
 )
-from app.core.forecasting import run_forecast
+from app.core.training import train_and_forecast
 
 router = APIRouter()
 
@@ -66,7 +66,15 @@ class TrainRequest(BaseModel):
     date_col: str
     target_col: str
     drivers: list[str] = []
-    horizon: int = 12
+    horizon: int = 8
+    baseline_model: str = "lagged_ridge"
+    multivariate_model: str = "gbm"
+    lag_config: str = "1,2,4"
+    auto_select_lags: bool = False
+    test_window_weeks: int = 48
+    validation_mode: str = "walk_forward"
+    calendar_features: bool = False
+    holiday_features: bool = False
 
 
 class ChatRequest(BaseModel):
@@ -158,39 +166,26 @@ async def train_model(req: TrainRequest):
     if req.target_col not in df.columns:
         raise HTTPException(status_code=400, detail=f"Target column '{req.target_col}' not found")
 
-    # Prepare time series
-    df[req.date_col] = pd.to_datetime(df[req.date_col])
-    df = df.sort_values(req.date_col).reset_index(drop=True)
-    df = df.set_index(req.date_col)
-
-    # Infer frequency
-    freq = pd.infer_freq(df.index)
-    if freq is None:
-        freq = "W"
-    df = df.asfreq(freq)
-
-    series = df[req.target_col].dropna().astype(float)
-
-    if len(series) < 20:
-        raise HTTPException(
-            status_code=400,
-            detail="Need at least 20 data points to train a model",
-        )
-
     try:
-        results = run_forecast(
-            series=series,
+        results = train_and_forecast(
+            df=df,
+            project_id=req.project_id,
+            date_col=req.date_col,
+            target_col=req.target_col,
+            drivers=req.drivers,
             horizon=req.horizon,
-            drivers=req.drivers if req.drivers else None,
+            baseline_model=req.baseline_model,
+            multivariate_model=req.multivariate_model,
+            lag_config=req.lag_config,
+            auto_select_lags=req.auto_select_lags,
+            test_window_weeks=req.test_window_weeks,
+            validation_mode=req.validation_mode,
+            calendar_features=req.calendar_features,
+            holiday_features=req.holiday_features,
+            input_paths=[Path(_projects[req.project_id]["file_path"])],
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Forecasting error: {e}")
-
-    # Attach historical data for charting
-    results["historical"] = {
-        "values": series.tolist(),
-        "index": series.index.strftime("%Y-%m-%d").tolist(),
-    }
 
     return results
 
