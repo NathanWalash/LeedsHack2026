@@ -142,6 +142,7 @@ export default function Step3TrainForecast() {
 
   const [status, setStatus] = useState<"idle" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [trainProgress, setTrainProgress] = useState(0);
 
   const getApiErrorMessage = (err: unknown) => {
     if (
@@ -164,10 +165,14 @@ export default function Step3TrainForecast() {
 
   const handleTrain = async () => {
     if (!canRun || !projectId) return;
+    setTrainProgress(8);
     setLoading(true);
     setLoadingMessage("Training models... this may take a moment.");
     setStatus("idle");
     setErrorMsg("");
+    const progressTimer = window.setInterval(() => {
+      setTrainProgress((prev) => (prev >= 92 ? prev : prev + 3));
+    }, 350);
 
     try {
       const result = await trainModel(projectId, (dateCol || detectedDateCol)!, targetCol!, {
@@ -182,12 +187,14 @@ export default function Step3TrainForecast() {
         calendarFeatures,
         holidayFeatures,
       });
+      setTrainProgress(100);
       setForecastResults(result);
       setStatus("success");
     } catch (err: unknown) {
       setErrorMsg(getApiErrorMessage(err));
       setStatus("error");
     } finally {
+      window.clearInterval(progressTimer);
       setLoading(false);
       setLoadingMessage("");
     }
@@ -372,6 +379,17 @@ export default function Step3TrainForecast() {
             {isLoading ? "Training..." : "Train Models"}
           </Button>
         </div>
+        {isLoading && (
+          <div className="mt-4">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-slate-800">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-teal-500 to-emerald-400 transition-all duration-300"
+                style={{ width: `${trainProgress}%` }}
+              />
+            </div>
+            <p className="mt-2 text-xs text-slate-400">{trainProgress}% complete</p>
+          </div>
+        )}
 
         {status === "success" && (
           <div className="mt-4 flex items-center gap-2 text-emerald-400 text-sm">
