@@ -326,6 +326,7 @@ export default function Step4Analysis() {
         actual: number | null;
         baseline_forecast: number | null;
         multivariate_forecast: number | null;
+        handoff_baseline: number | null;
         handoff_multivariate: number | null;
       }
     >();
@@ -337,6 +338,7 @@ export default function Step4Analysis() {
         actual: row.actual,
         baseline_forecast: null,
         multivariate_forecast: null,
+        handoff_baseline: null,
         handoff_multivariate: null,
       });
     }
@@ -353,6 +355,7 @@ export default function Step4Analysis() {
           actual: null,
           baseline_forecast: row.baseline_forecast,
           multivariate_forecast: row.multivariate_forecast,
+          handoff_baseline: null,
           handoff_multivariate: null,
         });
       }
@@ -365,9 +368,13 @@ export default function Step4Analysis() {
     if (lastHistorical && firstForecast && firstForecast.ts > lastHistorical.ts) {
       const left = sorted.find((r) => r.ts === lastHistorical.ts);
       const right = sorted.find((r) => r.ts === firstForecast.ts);
-      if (left && right && right.multivariate_forecast !== null) {
+      if (left && right) {
+        if (right.baseline_forecast !== null) {
+          left.handoff_baseline = left.actual;
+          right.handoff_baseline = right.baseline_forecast;
+        }
         left.handoff_multivariate = left.actual;
-        right.handoff_multivariate = right.multivariate_forecast;
+        right.handoff_multivariate = right.multivariate_forecast ?? null;
       }
     }
 
@@ -872,8 +879,17 @@ export default function Step4Analysis() {
                         <Line
                           type="monotone"
                           dataKey="handoff_multivariate"
-                          name="handoff"
+                          name="handoff multivariate"
                           stroke="#22c55e"
+                          dot={false}
+                          strokeDasharray="4 4"
+                          connectNulls
+                        />
+                        <Line
+                          type="monotone"
+                          dataKey="handoff_baseline"
+                          name="handoff baseline"
+                          stroke="#60a5fa"
                           dot={false}
                           strokeDasharray="4 4"
                           connectNulls
