@@ -133,7 +133,13 @@ function computeDomain<T extends Record<string, unknown>>(
 function tooltipValue(value: unknown) {
   const n = Number(value);
   if (!Number.isFinite(n)) return String(value);
-  return new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(n);
+  const abs = Math.abs(n);
+  const maximumFractionDigits = abs >= 100 ? 0 : 2;
+  return new Intl.NumberFormat("en-GB", { maximumFractionDigits }).format(n);
+}
+
+function formatDecimal(value: number, maxFractionDigits = 2) {
+  return new Intl.NumberFormat("en-GB", { maximumFractionDigits: maxFractionDigits }).format(value);
 }
 
 function getDateString(row: LooseRecord): string | null {
@@ -150,6 +156,42 @@ function getPrimaryNumericValue(row: LooseRecord): number | null {
   return null;
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function computeWindow<T extends { ts: number }>(
+  rows: T[],
+  zoomPercent: number,
+  panPercent: number
+) {
+  if (rows.length === 0) {
+    return {
+      rows: [] as T[],
+      startTs: null as number | null,
+      endTs: null as number | null,
+      startIndex: 0,
+      endIndex: 0,
+    };
+  }
+
+  const safeZoom = clamp(zoomPercent, 5, 100);
+  const windowSize = clamp(Math.round((rows.length * safeZoom) / 100), 2, rows.length);
+  const maxStart = Math.max(0, rows.length - windowSize);
+  const safePan = clamp(panPercent, 0, 100);
+  const startIndex = Math.round((safePan / 100) * maxStart);
+  const endIndex = startIndex + windowSize - 1;
+  const visibleRows = rows.slice(startIndex, endIndex + 1);
+
+  return {
+    rows: visibleRows,
+    startTs: visibleRows[0]?.ts ?? null,
+    endTs: visibleRows[visibleRows.length - 1]?.ts ?? null,
+    startIndex,
+    endIndex,
+  };
+}
+
 export default function Step4Analysis() {
   const { completeStep, nextStep, prevStep } = useBuildStore();
 
@@ -157,6 +199,14 @@ export default function Step4Analysis() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [selectedSections, setSelectedSections] = useState<string[]>(CORE_SECTIONS);
+  const [testZoom, setTestZoom] = useState(35);
+  const [testPan, setTestPan] = useState(100);
+  const [forecastZoom, setForecastZoom] = useState(35);
+  const [forecastPan, setForecastPan] = useState(100);
+  const [driverTempZoom, setDriverTempZoom] = useState(45);
+  const [driverTempPan, setDriverTempPan] = useState(100);
+  const [driverHolidayZoom, setDriverHolidayZoom] = useState(45);
+  const [driverHolidayPan, setDriverHolidayPan] = useState(100);
 
   useEffect(() => {
     let mounted = true;
@@ -267,6 +317,47 @@ export default function Step4Analysis() {
     [analysis]
   );
 
+  const forecastCombinedData = useMemo(() => {
+    const rows = new Map<
+      number,
+      {
+        ts: number;
+        week_ending: string;
+        actual: number | null;
+        baseline_forecast: number | null;
+        multivariate_forecast: number | null;
+      }
+    >();
+
+    for (const row of historicalTargetData) {
+      rows.set(row.ts, {
+        ts: row.ts,
+        week_ending: row.week_ending,
+        actual: row.actual,
+        baseline_forecast: null,
+        multivariate_forecast: null,
+      });
+    }
+
+    for (const row of forecastData) {
+      const existing = rows.get(row.ts);
+      if (existing) {
+        existing.baseline_forecast = row.baseline_forecast;
+        existing.multivariate_forecast = row.multivariate_forecast;
+      } else {
+        rows.set(row.ts, {
+          ts: row.ts,
+          week_ending: row.week_ending,
+          actual: null,
+          baseline_forecast: row.baseline_forecast,
+          multivariate_forecast: row.multivariate_forecast,
+        });
+      }
+    }
+
+    return Array.from(rows.values()).sort((a, b) => a.ts - b.ts);
+  }, [historicalTargetData, forecastData]);
+
   const featureImportanceData = useMemo(
     () =>
       (analysis?.datasets.feature_importance || [])
@@ -314,22 +405,44 @@ export default function Step4Analysis() {
       .sort((a, b) => a.ts - b.ts);
   }, [analysis]);
 
+  const testFitWindow = useMemo(
+    () => computeWindow(testFitCombinedData, testZoom, testPan),
+    [testFitCombinedData, testZoom, testPan]
+  );
+  const forecastWindow = useMemo(
+    () => computeWindow(forecastCombinedData, forecastZoom, forecastPan),
+    [forecastCombinedData, forecastZoom, forecastPan]
+  );
+  const driverTempWindow = useMemo(
+    () => computeWindow(driverData, driverTempZoom, driverTempPan),
+    [driverData, driverTempZoom, driverTempPan]
+  );
+  const driverHolidayWindow = useMemo(
+    () => computeWindow(driverData, driverHolidayZoom, driverHolidayPan),
+    [driverData, driverHolidayZoom, driverHolidayPan]
+  );
+
   const testFitDomain = useMemo(
-    () => computeDomain(testFitCombinedData, ["actual", "baseline", "multivariate"]),
-    [testFitCombinedData]
+    () => computeDomain(testFitWindow.rows, ["actual", "baseline", "multivariate"]),
+    [testFitWindow.rows]
   );
   const forecastDomain = useMemo(
-    () => computeDomain(forecastData, ["baseline_forecast", "multivariate_forecast"]),
-    [forecastData]
+    () => computeDomain(forecastWindow.rows, ["actual", "baseline_forecast", "multivariate_forecast"]),
+    [forecastWindow.rows]
   );
   const errorDomain = useMemo(
     () => computeDomain(errorTrendData, ["baseline_error", "multivariate_error"], true),
     [errorTrendData]
   );
-  const tempDomain = useMemo(() => computeDomain(driverData, ["temp_mean"]), [driverData]);
-  const holidayDomain = useMemo(() => computeDomain(driverData, ["holiday_count"], true), [driverData]);
+  const tempDomain = useMemo(() => computeDomain(driverTempWindow.rows, ["temp_mean"]), [driverTempWindow.rows]);
+  const holidayDomain = useMemo(
+    () => computeDomain(driverHolidayWindow.rows, ["holiday_count"], true),
+    [driverHolidayWindow.rows]
+  );
   const testWindowStartTs = testFitData.length > 0 ? testFitData[0].ts : null;
   const testWindowEndTs = testFitData.length > 0 ? testFitData[testFitData.length - 1].ts : null;
+  const forecastWindowStartTs = forecastData.length > 0 ? forecastData[0].ts : null;
+  const forecastWindowEndTs = forecastData.length > 0 ? forecastData[forecastData.length - 1].ts : null;
 
   const forecastTableRows = useMemo(() => forecastData.slice(0, 8), [forecastData]);
 
@@ -489,52 +602,67 @@ export default function Step4Analysis() {
                 <p className="text-xs text-slate-500 mb-3">
                   Y-axis: {targetLabel} count. Baseline and multivariate lines are only shown in the test window.
                 </p>
+                <p className="text-xs text-slate-500 mb-3">
+                  Use the View Window sliders to zoom and pan across time.
+                </p>
                 {testFitCombinedData.length === 0 ? (
                   <EmptyState text="No test_predictions data found." />
                 ) : (
-                  <ChartWrap>
-                    <LineChart data={testFitCombinedData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                      <XAxis
-                        dataKey="ts"
-                        type="number"
-                        scale="time"
-                        domain={["dataMin", "dataMax"]}
-                        tickFormatter={(v) => formatShortDateFromTs(Number(v))}
-                        minTickGap={28}
-                        angle={-25}
-                        textAnchor="end"
-                        height={56}
-                        tick={{ fontSize: 11 }}
-                      />
-                      <YAxis domain={testFitDomain} tickFormatter={formatAxisNumber} tick={{ fontSize: 11 }} />
-                      <Tooltip
-                        labelFormatter={(label) => formatLongDateFromTs(Number(label))}
-                        formatter={tooltipValue}
-                      />
-                      <Legend />
-                      {testWindowStartTs !== null && testWindowEndTs !== null && (
-                        <ReferenceArea
-                          x1={testWindowStartTs}
-                          x2={testWindowEndTs}
-                          fill="#0f172a"
-                          fillOpacity={0.35}
-                          ifOverflow="extendDomain"
+                  <div className="space-y-3">
+                    <ChartWrap>
+                      <LineChart data={testFitWindow.rows}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                        <XAxis
+                          dataKey="ts"
+                          type="number"
+                          scale="time"
+                          domain={["dataMin", "dataMax"]}
+                          tickFormatter={(v) => formatShortDateFromTs(Number(v))}
+                          minTickGap={28}
+                          angle={-25}
+                          textAnchor="end"
+                          height={56}
+                          tick={{ fontSize: 11 }}
                         />
-                      )}
-                      <Line type="monotone" dataKey="actual" stroke="#cbd5e1" dot={false} strokeWidth={2} />
-                      <Line
-                        type="monotone"
-                        dataKey="actual_test"
-                        stroke="#94a3b8"
-                        dot={false}
-                        strokeDasharray="4 3"
-                        name="actual (test)"
-                      />
-                      <Line type="monotone" dataKey="baseline" stroke="#3b82f6" dot={false} />
-                      <Line type="monotone" dataKey="multivariate" stroke="#14b8a6" dot={false} />
-                    </LineChart>
-                  </ChartWrap>
+                        <YAxis domain={testFitDomain} tickFormatter={formatAxisNumber} tick={{ fontSize: 11 }} />
+                        <Tooltip
+                          labelFormatter={(label) => formatLongDateFromTs(Number(label))}
+                          formatter={tooltipValue}
+                        />
+                        <Legend />
+                        {testWindowStartTs !== null && testWindowEndTs !== null && (
+                          <ReferenceArea
+                            x1={testWindowStartTs}
+                            x2={testWindowEndTs}
+                            fill="#14532d"
+                            fillOpacity={0.22}
+                            ifOverflow="extendDomain"
+                          />
+                        )}
+                        <Line type="monotone" dataKey="actual" stroke="#cbd5e1" dot={false} strokeWidth={2} />
+                        <Line
+                          type="monotone"
+                          dataKey="actual_test"
+                          stroke="#22c55e"
+                          dot={false}
+                          strokeDasharray="4 3"
+                          name="actual (test)"
+                        />
+                        <Line type="monotone" dataKey="baseline" stroke="#3b82f6" dot={false} />
+                        <Line type="monotone" dataKey="multivariate" stroke="#14b8a6" dot={false} />
+                      </LineChart>
+                    </ChartWrap>
+                    <TimelineControls
+                      title="View Window"
+                      zoom={testZoom}
+                      pan={testPan}
+                      onZoom={setTestZoom}
+                      onPan={setTestPan}
+                      fromTs={testFitWindow.startTs}
+                      toTs={testFitWindow.endTs}
+                      disablePan={testFitWindow.rows.length === testFitCombinedData.length}
+                    />
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -598,7 +726,7 @@ export default function Step4Analysis() {
                   <ChartWrap height={340}>
                     <BarChart data={featureImportanceData} layout="vertical">
                       <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                      <XAxis type="number" tick={{ fontSize: 11 }} />
+                      <XAxis type="number" tickFormatter={(v) => formatDecimal(Number(v), 2)} tick={{ fontSize: 11 }} />
                       <YAxis type="category" dataKey="feature" width={160} tick={{ fontSize: 11 }} />
                       <Tooltip formatter={tooltipValue} />
                       <Bar dataKey="importance" fill="#14b8a6" radius={[0, 4, 4, 0]} />
@@ -625,93 +753,193 @@ export default function Step4Analysis() {
               </CardHeader>
               <CardContent>
                 <p className="text-xs text-slate-500 mb-1">
-                  X-axis: future week ending dates from `forecasts/forecast.csv` (sorted chronologically).
+                  X-axis: historical timeline from `artifacts/target_series.csv` plus future dates from
+                  `forecasts/forecast.csv`.
                 </p>
                 <p className="text-xs text-slate-500 mb-3">
-                  Y-axis: predicted {targetLabel} count from `baseline_forecast` and `multivariate_forecast`.
+                  Y-axis: {targetLabel} count. Historical actuals are shown up to now, then forecast lines continue
+                  forward.
                 </p>
-                {forecastData.length === 0 ? (
+                <p className="text-xs text-slate-500 mb-3">
+                  Use the View Window sliders to zoom and pan, then inspect the right-hand forecast region in detail.
+                </p>
+                {forecastCombinedData.length === 0 ? (
                   <EmptyState text="No forecast data found." />
                 ) : (
-                  <ChartWrap>
-                    <LineChart data={forecastData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                      <XAxis
-                        dataKey="ts"
-                        type="number"
-                        scale="time"
-                        domain={["dataMin", "dataMax"]}
-                        tickFormatter={(v) => formatShortDateFromTs(Number(v))}
-                        minTickGap={28}
-                        angle={-25}
-                        textAnchor="end"
-                        height={56}
-                        tick={{ fontSize: 11 }}
-                      />
-                      <YAxis domain={forecastDomain} tickFormatter={formatAxisNumber} tick={{ fontSize: 11 }} />
-                      <Tooltip
-                        labelFormatter={(label) => formatLongDateFromTs(Number(label))}
-                        formatter={tooltipValue}
-                      />
-                      <Legend />
-                      <Line type="monotone" dataKey="baseline_forecast" name="baseline" stroke="#3b82f6" dot={false} />
-                      <Line
-                        type="monotone"
-                        dataKey="multivariate_forecast"
-                        name="multivariate"
-                        stroke="#14b8a6"
-                        dot={false}
-                        strokeWidth={2}
-                      />
-                    </LineChart>
-                  </ChartWrap>
+                  <div className="space-y-3">
+                    <ChartWrap>
+                      <LineChart data={forecastWindow.rows}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                        <XAxis
+                          dataKey="ts"
+                          type="number"
+                          scale="time"
+                          domain={["dataMin", "dataMax"]}
+                          tickFormatter={(v) => formatShortDateFromTs(Number(v))}
+                          minTickGap={28}
+                          angle={-25}
+                          textAnchor="end"
+                          height={56}
+                          tick={{ fontSize: 11 }}
+                        />
+                        <YAxis domain={forecastDomain} tickFormatter={formatAxisNumber} tick={{ fontSize: 11 }} />
+                        <Tooltip
+                          labelFormatter={(label) => formatLongDateFromTs(Number(label))}
+                          formatter={tooltipValue}
+                        />
+                        <Legend />
+                        {forecastWindowStartTs !== null && forecastWindowEndTs !== null && (
+                          <ReferenceArea
+                            x1={forecastWindowStartTs}
+                            x2={forecastWindowEndTs}
+                            fill="#022c22"
+                            fillOpacity={0.22}
+                            ifOverflow="extendDomain"
+                          />
+                        )}
+                        <Line
+                          type="monotone"
+                          dataKey="actual"
+                          name="historical actual"
+                          stroke="#cbd5e1"
+                          dot={false}
+                          strokeWidth={2}
+                        />
+                        <Line type="monotone" dataKey="baseline_forecast" name="baseline" stroke="#3b82f6" dot={false} />
+                        <Line
+                          type="monotone"
+                          dataKey="multivariate_forecast"
+                          name="multivariate"
+                          stroke="#14b8a6"
+                          dot={false}
+                          strokeWidth={2}
+                        />
+                      </LineChart>
+                    </ChartWrap>
+                    <TimelineControls
+                      title="View Window"
+                      zoom={forecastZoom}
+                      pan={forecastPan}
+                      onZoom={setForecastZoom}
+                      onPan={setForecastPan}
+                      fromTs={forecastWindow.startTs}
+                      toTs={forecastWindow.endTs}
+                      disablePan={forecastWindow.rows.length === forecastCombinedData.length}
+                    />
+                  </div>
                 )}
               </CardContent>
             </Card>
           )}
 
           {selectedSections.includes("driver-series") && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Driver Signals</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-slate-500 mb-3">
-                  Left Y-axis: weekly mean temperature from `artifacts/temp_weekly.csv`. Right Y-axis: holiday count
-                  from `artifacts/holiday_weekly.csv`.
-                </p>
-                {driverData.length === 0 ? (
-                  <EmptyState text="No driver data found." />
-                ) : (
-                  <ChartWrap>
-                    <LineChart data={driverData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                      <XAxis
-                        dataKey="ts"
-                        type="number"
-                        scale="time"
-                        domain={["dataMin", "dataMax"]}
-                        tickFormatter={(v) => formatShortDateFromTs(Number(v))}
-                        minTickGap={28}
-                        angle={-25}
-                        textAnchor="end"
-                        height={56}
-                        tick={{ fontSize: 11 }}
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Driver Signal: Temperature</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-xs text-slate-500 mb-3">
+                    Y-axis: weekly mean temperature from `artifacts/temp_weekly.csv`.
+                  </p>
+                  {driverData.length === 0 ? (
+                    <EmptyState text="No temperature driver data found." />
+                  ) : (
+                    <div className="space-y-3">
+                      <ChartWrap>
+                        <LineChart data={driverTempWindow.rows}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                          <XAxis
+                            dataKey="ts"
+                            type="number"
+                            scale="time"
+                            domain={["dataMin", "dataMax"]}
+                            tickFormatter={(v) => formatShortDateFromTs(Number(v))}
+                            minTickGap={28}
+                            angle={-25}
+                            textAnchor="end"
+                            height={56}
+                            tick={{ fontSize: 11 }}
+                          />
+                          <YAxis
+                            domain={tempDomain}
+                            tickFormatter={(v) => formatDecimal(Number(v), 1)}
+                            tick={{ fontSize: 11 }}
+                          />
+                          <Tooltip
+                            labelFormatter={(label) => formatLongDateFromTs(Number(label))}
+                            formatter={tooltipValue}
+                          />
+                          <Legend />
+                          <Line type="monotone" dataKey="temp_mean" stroke="#22d3ee" dot={false} />
+                        </LineChart>
+                      </ChartWrap>
+                      <TimelineControls
+                        title="View Window"
+                        zoom={driverTempZoom}
+                        pan={driverTempPan}
+                        onZoom={setDriverTempZoom}
+                        onPan={setDriverTempPan}
+                        fromTs={driverTempWindow.startTs}
+                        toTs={driverTempWindow.endTs}
+                        disablePan={driverTempWindow.rows.length === driverData.length}
                       />
-                      <YAxis yAxisId="left" domain={tempDomain} tick={{ fontSize: 11 }} />
-                      <YAxis yAxisId="right" orientation="right" domain={holidayDomain} tick={{ fontSize: 11 }} />
-                      <Tooltip
-                        labelFormatter={(label) => formatLongDateFromTs(Number(label))}
-                        formatter={tooltipValue}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Driver Signal: Holidays</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-xs text-slate-500 mb-3">
+                    Y-axis: holiday count from `artifacts/holiday_weekly.csv`.
+                  </p>
+                  {driverData.length === 0 ? (
+                    <EmptyState text="No holiday driver data found." />
+                  ) : (
+                    <div className="space-y-3">
+                      <ChartWrap>
+                        <BarChart data={driverHolidayWindow.rows}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                          <XAxis
+                            dataKey="ts"
+                            type="number"
+                            scale="time"
+                            domain={["dataMin", "dataMax"]}
+                            tickFormatter={(v) => formatShortDateFromTs(Number(v))}
+                            minTickGap={28}
+                            angle={-25}
+                            textAnchor="end"
+                            height={56}
+                            tick={{ fontSize: 11 }}
+                          />
+                          <YAxis domain={holidayDomain} tickFormatter={formatAxisNumber} tick={{ fontSize: 11 }} />
+                          <Tooltip
+                            labelFormatter={(label) => formatLongDateFromTs(Number(label))}
+                            formatter={tooltipValue}
+                          />
+                          <Legend />
+                          <Bar dataKey="holiday_count" name="holiday count" fill="#f59e0b" radius={[2, 2, 0, 0]} />
+                        </BarChart>
+                      </ChartWrap>
+                      <TimelineControls
+                        title="View Window"
+                        zoom={driverHolidayZoom}
+                        pan={driverHolidayPan}
+                        onZoom={setDriverHolidayZoom}
+                        onPan={setDriverHolidayPan}
+                        fromTs={driverHolidayWindow.startTs}
+                        toTs={driverHolidayWindow.endTs}
+                        disablePan={driverHolidayWindow.rows.length === driverData.length}
                       />
-                      <Legend />
-                      <Line yAxisId="left" type="monotone" dataKey="temp_mean" stroke="#22d3ee" dot={false} />
-                      <Line yAxisId="right" type="monotone" dataKey="holiday_count" stroke="#f59e0b" dot={false} />
-                    </LineChart>
-                  </ChartWrap>
-                )}
-              </CardContent>
-            </Card>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           )}
 
           {selectedSections.includes("forecast-table") && (
@@ -780,6 +1008,72 @@ function ChartWrap({ children, height = 320 }: { children: React.ReactNode; heig
     <ResponsiveContainer width="100%" height={height}>
       {children as React.ReactElement}
     </ResponsiveContainer>
+  );
+}
+
+function TimelineControls({
+  title,
+  zoom,
+  pan,
+  onZoom,
+  onPan,
+  fromTs,
+  toTs,
+  disablePan,
+}: {
+  title: string;
+  zoom: number;
+  pan: number;
+  onZoom: (value: number) => void;
+  onPan: (value: number) => void;
+  fromTs: number | null;
+  toTs: number | null;
+  disablePan: boolean;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs font-semibold text-slate-300">{title}</p>
+        <p className="text-xs text-slate-400">
+          {fromTs !== null && toTs !== null
+            ? `${formatShortDateFromTs(fromTs)} to ${formatShortDateFromTs(toTs)}`
+            : "No range"}
+        </p>
+      </div>
+
+      <div className="space-y-1">
+        <div className="flex items-center justify-between text-xs text-slate-400">
+          <span>Zoom</span>
+          <span>{zoom}% visible</span>
+        </div>
+        <input
+          type="range"
+          min={5}
+          max={100}
+          step={1}
+          value={zoom}
+          onChange={(e) => onZoom(Number(e.target.value))}
+          className="w-full h-2 rounded-lg bg-slate-700 accent-teal-500 cursor-pointer"
+        />
+      </div>
+
+      <div className="space-y-1">
+        <div className="flex items-center justify-between text-xs text-slate-400">
+          <span>Pan</span>
+          <span>{pan}%</span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={pan}
+          onChange={(e) => onPan(Number(e.target.value))}
+          disabled={disablePan}
+          className="w-full h-2 rounded-lg bg-slate-700 accent-teal-400 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+        />
+      </div>
+    </div>
   );
 }
 
