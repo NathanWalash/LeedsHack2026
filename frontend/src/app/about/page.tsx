@@ -80,7 +80,7 @@ export default function AboutPage() {
         {/* CTA */}
         <div className="text-center mt-12">
           <Link
-            href="/build"
+            href="/create"
             className="inline-flex items-center gap-2 px-8 py-3.5 bg-teal-600 hover:bg-teal-500 text-white font-semibold rounded-xl transition-all shadow-lg shadow-teal-900/40"
           >
             Start Building

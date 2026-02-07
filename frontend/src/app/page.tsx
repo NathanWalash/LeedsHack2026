@@ -45,7 +45,7 @@ export default function Home() {
 
         <div className="mt-10 flex items-center justify-center gap-4">
           <Link
-            href="/build"
+            href="/create"
             className="inline-flex items-center gap-2 px-8 py-3.5 bg-teal-600 hover:bg-teal-500 text-white font-semibold rounded-xl transition-all shadow-lg shadow-teal-900/40 hover:shadow-teal-900/60"
           >
             <Upload className="w-4 h-4" />
