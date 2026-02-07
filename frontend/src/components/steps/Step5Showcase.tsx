@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useBuildStore, useAuthStore } from "@/lib/store";
-import { getSampleAnalysisBundle, type AnalysisBundle, updateProject } from "@/lib/api";
-import { Badge, BubbleSelect, Button, Input, Textarea } from "@/components/ui";
+import {
+  createProject,
+  getSampleAnalysisBundle,
+  type AnalysisBundle,
+  updateProject,
+} from "@/lib/api";
+import { Badge, Button, Input, Textarea } from "@/components/ui";
 import {
   ArrowDown,
   ArrowLeft,
@@ -11,6 +16,7 @@ import {
   BarChart3,
   Briefcase,
   CalendarDays,
+  Check,
   CircleDollarSign,
   Eye,
   GripVertical,
@@ -60,7 +66,7 @@ type GraphBlock = {
 type NotebookBlock = TextBlock | GraphBlock;
 
 const STAGES = [
-  { id: "setup" as StageId, label: "Start Prompt", icon: <Lightbulb className="w-4 h-4" /> },
+  { id: "setup" as StageId, label: "Story Setup", icon: <Lightbulb className="w-4 h-4" /> },
   { id: "compose" as StageId, label: "Notebook Builder", icon: <PenSquare className="w-4 h-4" /> },
   { id: "preview" as StageId, label: "Preview & Publish", icon: <Eye className="w-4 h-4" /> },
 ];
@@ -147,10 +153,12 @@ const formatDecimal = (value: number, maxFractionDigits = 2) =>
   new Intl.NumberFormat("en-GB", { maximumFractionDigits: maxFractionDigits }).format(value);
 const id = () => `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 const styleLabel = (style: TextStyle) => TEXT_PRESETS.find((p) => p.value === style)?.label || "Text";
+const categoryMeta = (id: string) => CATEGORY_OPTIONS.find((opt) => opt.id === id);
 
 export default function Step5Showcase() {
   const {
     projectId,
+    setProjectId,
     projectTitle,
     projectDescription,
     useCase,
@@ -177,6 +185,7 @@ export default function Step5Showcase() {
   const [blocks, setBlocks] = useState<NotebookBlock[]>([]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [publishError, setPublishError] = useState("");
   const [published, setPublished] = useState(false);
 
   useEffect(() => {
@@ -364,30 +373,61 @@ export default function Step5Showcase() {
     setBlocks([{ id: id(), type: "graph", assetId: seed.id, title: seed.title, caption: seed.caption, windowStartTs: w.start, windowEndTs: w.end }]);
   }, [blocks.length, forecastCombined]);
 
-  const addTextBlock = (style: TextStyle = "body") => setBlocks([...blocks, { id: id(), type: "text", style, content: style === "bullets" ? "Point one\nPoint two" : style === "h1" ? headline || "Heading" : "Write your text" }]);
+  const addTextBlock = (style: TextStyle = "body") =>
+    setBlocks((prev) => [
+      ...prev,
+      {
+        id: id(),
+        type: "text",
+        style,
+        content:
+          style === "bullets"
+            ? "Point one\nPoint two"
+            : style === "h1"
+              ? headline || "Heading"
+              : "Write your text",
+      },
+    ]);
   const addGraphBlock = () => {
     const seed = GRAPH_ASSETS[0];
     const w = defaultWindow(seed.id);
-    setBlocks([...blocks, { id: id(), type: "graph", assetId: seed.id, title: seed.title, caption: seed.caption, windowStartTs: w.start, windowEndTs: w.end }]);
+    setBlocks((prev) => [
+      ...prev,
+      {
+        id: id(),
+        type: "graph",
+        assetId: seed.id,
+        title: seed.title,
+        caption: seed.caption,
+        windowStartTs: w.start,
+        windowEndTs: w.end,
+      },
+    ]);
   };
-  const updateBlock = (blockId: string, fn: (b: NotebookBlock) => NotebookBlock) => setBlocks(blocks.map((b) => (b.id === blockId ? fn(b) : b)));
-  const moveBlock = (i: number, dir: "up" | "down") => {
-    const t = dir === "up" ? i - 1 : i + 1;
-    if (t < 0 || t >= blocks.length) return;
-    const c = [...blocks];
-    [c[i], c[t]] = [c[t], c[i]];
-    setBlocks(c);
-  };
-  const reorderBlocks = (sourceId: string, targetId: string) => {
+  const updateBlock = useCallback((blockId: string, fn: (b: NotebookBlock) => NotebookBlock) => {
+    setBlocks((prev) => prev.map((b) => (b.id === blockId ? fn(b) : b)));
+  }, []);
+  const moveBlock = useCallback((i: number, dir: "up" | "down") => {
+    setBlocks((prev) => {
+      const t = dir === "up" ? i - 1 : i + 1;
+      if (t < 0 || t >= prev.length) return prev;
+      const c = [...prev];
+      [c[i], c[t]] = [c[t], c[i]];
+      return c;
+    });
+  }, []);
+  const reorderBlocks = useCallback((sourceId: string, targetId: string) => {
     if (!sourceId || sourceId === targetId) return;
-    const s = blocks.findIndex((b) => b.id === sourceId);
-    const t = blocks.findIndex((b) => b.id === targetId);
-    if (s < 0 || t < 0) return;
-    const c = [...blocks];
-    const [m] = c.splice(s, 1);
-    c.splice(t, 0, m);
-    setBlocks(c);
-  };
+    setBlocks((prev) => {
+      const s = prev.findIndex((b) => b.id === sourceId);
+      const t = prev.findIndex((b) => b.id === targetId);
+      if (s < 0 || t < 0) return prev;
+      const c = [...prev];
+      const [m] = c.splice(s, 1);
+      c.splice(t, 0, m);
+      return c;
+    });
+  }, []);
 
   const handleAISuggestSetup = () => {
     setHeadline(projectTitle?.trim() ? `${projectTitle}: Forecast Highlights` : "Forecast Highlights");
@@ -600,27 +640,83 @@ export default function Step5Showcase() {
   };
 
   const handlePublish = async () => {
+    setPublishError("");
     setLoading(true);
-    try {
-      if (projectId) {
-        await updateProject(projectId, 5, {
-          headline,
-          description: summary,
-          categories: tags,
-          notebook_blocks: blocks,
-          published: true,
-          publish_mode: "stub",
-          horizon,
-          drivers: selectedDrivers,
-          baselineModel,
-          multivariateModel,
-        });
+
+    const payload = {
+      headline,
+      description: summary,
+      categories: tags,
+      notebook_blocks: blocks,
+      published: true,
+      publish_mode: "live",
+      author_user_id: user?.user_id || null,
+      author_username: user?.username || null,
+      horizon,
+      drivers: selectedDrivers,
+      baselineModel,
+      multivariateModel,
+    };
+
+    const getErrDetail = (err: unknown) =>
+      typeof err === "object" &&
+      err !== null &&
+      "response" in err &&
+      typeof (err as { response?: { data?: { detail?: string } } }).response?.data?.detail === "string"
+        ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+        : null;
+
+    const ensureProjectId = async () => {
+      if (projectId) return projectId;
+      if (!user) {
+        throw new Error("Please sign in before publishing so we can save your story.");
       }
+      const created = await createProject(
+        user.user_id,
+        headline.trim() || projectTitle || "Forecast Notebook Post",
+        summary || projectDescription || "",
+        useCase || ""
+      );
+      setProjectId(created.project_id);
+      return created.project_id as string;
+    };
+
+    try {
+      let targetProjectId = await ensureProjectId();
+
+      try {
+        await updateProject(targetProjectId, 5, payload);
+      } catch (err: unknown) {
+        const status =
+          typeof err === "object" &&
+          err !== null &&
+          "response" in err &&
+          typeof (err as { response?: { status?: number } }).response?.status === "number"
+            ? (err as { response?: { status?: number } }).response?.status
+            : null;
+
+        if (status === 404 && user) {
+          // Backend store may have restarted and lost the in-memory project.
+          const recreated = await createProject(
+            user.user_id,
+            headline.trim() || projectTitle || "Forecast Notebook Post",
+            summary || projectDescription || "",
+            useCase || ""
+          );
+          targetProjectId = recreated.project_id as string;
+          setProjectId(targetProjectId);
+          await updateProject(targetProjectId, 5, payload);
+        } else {
+          throw err;
+        }
+      }
+
       completeStep(5);
       setPublished(true);
-    } catch {
-      completeStep(5);
-      setPublished(true);
+    } catch (err: unknown) {
+      setPublishError(
+        getErrDetail(err) || (err instanceof Error ? err.message : "Publishing failed. Please try again.")
+      );
     } finally {
       setLoading(false);
     }
@@ -633,8 +729,8 @@ export default function Step5Showcase() {
         <h2 className="text-3xl font-bold text-white mb-3">Notebook Story Published</h2>
         <p className="text-slate-400 max-w-lg mb-8">&ldquo;{headline || projectTitle || "Forecast Notebook Post"}&rdquo; is ready.</p>
         <div className="flex gap-3">
-          <Button variant="secondary" onClick={() => (window.location.href = "/explore")}>View Explore (stub)</Button>
-          <Button onClick={() => (window.location.href = "/create")}>Build Another</Button>
+          <Button size="lg" variant="secondary" onClick={() => (window.location.href = "/explore")}>View Explore</Button>
+          <Button size="lg" onClick={() => (window.location.href = "/create")}>Build Another</Button>
         </div>
       </div>
     );
@@ -644,7 +740,7 @@ export default function Step5Showcase() {
     <div className="space-y-6">
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
         <h3 className="text-lg font-semibold text-white flex items-center gap-2"><PenSquare className="w-5 h-5 text-teal-400" />Publish Story</h3>
-        <p className="text-sm text-slate-400 mt-1">Notebook-style post with drag/drop blocks and real charts from Step 4 data.</p>
+        <p className="text-sm text-slate-400 mt-1">Build a clear story from your results using text and chart blocks, then publish to Explore.</p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-4">
           {STAGES.map((s, i) => (
             <button key={s.id} type="button" onClick={() => setStage(s.id)} className={`rounded-xl border px-3 py-3 text-left transition cursor-pointer ${stage === s.id ? "border-teal-500 bg-teal-500/10" : "border-slate-700 bg-slate-800/40 hover:border-slate-600"}`}>
@@ -657,12 +753,64 @@ export default function Step5Showcase() {
       {stage === "setup" && (
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-5">
           <div className="flex items-center justify-between">
-            <h4 className="text-white font-semibold text-base">Step 1: Start Prompt</h4>
-            <Button size="sm" variant="secondary" onClick={handleAISuggestSetup}><Sparkles className="w-3.5 h-3.5 mr-1" />AI Suggest (Stub)</Button>
+            <h4 className="text-white font-semibold text-base">Step 1: Create Your Story</h4>
+            <Button size="sm" variant="secondary" onClick={handleAISuggestSetup}><Sparkles className="w-3.5 h-3.5 mr-1" />AI Suggestion</Button>
           </div>
           <Input label="Headline" value={headline} onChange={(e) => setHeadline(e.target.value)} />
-          <Textarea label="Description" value={summary} onChange={(e) => setSummary(e.target.value)} rows={4} />
-          <BubbleSelect label="Categories" options={CATEGORY_OPTIONS} selected={tags} onSelect={(id) => setTags(tags.includes(id) ? tags.filter((t) => t !== id) : [...tags, id])} multi />
+          <Textarea label="Short Description" value={summary} onChange={(e) => setSummary(e.target.value)} rows={4} />
+          <div className="space-y-3">
+            <div>
+              <p className="text-sm font-medium text-slate-300">Categories</p>
+              <p className="text-xs text-slate-500 mt-1">Pick one or more categories so people can find your story faster.</p>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {CATEGORY_OPTIONS.map((option) => {
+                const active = tags.includes(option.id);
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() =>
+                      setTags(active ? tags.filter((t) => t !== option.id) : [...tags, option.id])
+                    }
+                    className={`rounded-xl border px-3 py-2.5 text-left transition cursor-pointer ${
+                      active
+                        ? "border-teal-500 bg-teal-500/10 text-teal-200"
+                        : "border-slate-700 bg-slate-800/40 text-slate-300 hover:border-slate-600"
+                    }`}
+                  >
+                    <span className="inline-flex items-center gap-2 text-sm font-medium">
+                      <span className={active ? "text-teal-300" : "text-slate-400"}>{option.icon}</span>
+                      {option.label}
+                    </span>
+                    <span className="block text-[11px] mt-1 text-slate-500">
+                      {active ? "Selected" : "Tap to add"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {tags.length === 0 ? (
+                <span className="text-xs text-slate-500">No categories selected yet.</span>
+              ) : (
+                tags.map((tag) => {
+                  const meta = categoryMeta(tag);
+                  return (
+                    <span
+                      key={tag}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-teal-800 bg-teal-900/20 px-2.5 py-1 text-xs text-teal-200"
+                    >
+                      {meta?.icon || <Check className="w-3 h-3" />}
+                      {meta?.label || tag}
+                    </span>
+                  );
+                })
+              )}
+            </div>
+          </div>
           {notice && <p className="text-xs text-teal-300">{notice}</p>}
         </div>
       )}
@@ -670,11 +818,11 @@ export default function Step5Showcase() {
       {stage === "compose" && (
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h4 className="text-white font-semibold text-base">Step 2: Notebook Builder</h4>
+            <h4 className="text-white font-semibold text-base">Step 2: Build Your Notebook</h4>
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="default">{blocks.length} blocks</Badge>
-              <Button size="sm" onClick={() => addTextBlock("body")}><Plus className="w-3.5 h-3.5 mr-1" />Add Text</Button>
-              <Button size="sm" variant="secondary" onClick={addGraphBlock}><Plus className="w-3.5 h-3.5 mr-1" />Add Graph</Button>
+              <Button onClick={() => addTextBlock("body")}><Plus className="w-3.5 h-3.5 mr-1" />Add Text Block</Button>
+              <Button variant="secondary" onClick={addGraphBlock}><Plus className="w-3.5 h-3.5 mr-1" />Add Graph Block</Button>
             </div>
           </div>
           {blocks.map((b, i) => (
@@ -687,7 +835,7 @@ export default function Step5Showcase() {
                 <div className="flex gap-2">
                   <Button size="sm" variant="secondary" onClick={() => moveBlock(i, "up")} disabled={i === 0}><ArrowUp className="w-4 h-4" /></Button>
                   <Button size="sm" variant="secondary" onClick={() => moveBlock(i, "down")} disabled={i === blocks.length - 1}><ArrowDown className="w-4 h-4" /></Button>
-                  <Button size="sm" variant="destructive" onClick={() => setBlocks(blocks.filter((x) => x.id !== b.id))}><Trash2 className="w-3.5 h-3.5" /></Button>
+                  <Button size="sm" variant="destructive" onClick={() => setBlocks((prev) => prev.filter((x) => x.id !== b.id))}><Trash2 className="w-3.5 h-3.5" /></Button>
                 </div>
               </div>
 
@@ -698,8 +846,15 @@ export default function Step5Showcase() {
                       {TEXT_PRESETS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
                     </select>
                   </label>
-                  <Textarea label={`Content (${styleLabel(b.style)})`} value={b.content} onChange={(e) => updateBlock(b.id, (x) => x.type === "text" ? { ...x, content: e.target.value } : x)} rows={4} />
-                  <Button size="sm" variant="secondary" onClick={() => handleAISuggestText(b.id)}><Sparkles className="w-3.5 h-3.5 mr-1" />AI Suggest Text (Stub)</Button>
+                  <BufferedTextarea
+                    label={`Content (${styleLabel(b.style)})`}
+                    value={b.content}
+                    rows={4}
+                    onCommit={(next) =>
+                      updateBlock(b.id, (x) => (x.type === "text" ? { ...x, content: next } : x))
+                    }
+                  />
+                  <Button size="sm" variant="secondary" onClick={() => handleAISuggestText(b.id)}><Sparkles className="w-3.5 h-3.5 mr-1" />AI Suggest Text</Button>
                 </div>
               )}
 
@@ -710,9 +865,22 @@ export default function Step5Showcase() {
                       {GRAPH_ASSETS.map((g) => <option key={g.id} value={g.id}>{g.title}</option>)}
                     </select>
                   </label>
-                  <Input label="Graph Title" value={b.title} onChange={(e) => updateBlock(b.id, (x) => x.type === "graph" ? { ...x, title: e.target.value } : x)} />
-                  <Textarea label="Graph Caption" value={b.caption} onChange={(e) => updateBlock(b.id, (x) => x.type === "graph" ? { ...x, caption: e.target.value } : x)} rows={3} />
-                  <Button size="sm" variant="secondary" onClick={() => handleAICaption(b.id)}><Sparkles className="w-3.5 h-3.5 mr-1" />AI Caption (Stub)</Button>
+                  <BufferedInput
+                    label="Graph Title"
+                    value={b.title}
+                    onCommit={(next) =>
+                      updateBlock(b.id, (x) => (x.type === "graph" ? { ...x, title: next } : x))
+                    }
+                  />
+                  <BufferedTextarea
+                    label="Graph Caption"
+                    value={b.caption}
+                    rows={3}
+                    onCommit={(next) =>
+                      updateBlock(b.id, (x) => (x.type === "graph" ? { ...x, caption: next } : x))
+                    }
+                  />
+                  <Button size="sm" variant="secondary" onClick={() => handleAICaption(b.id)}><Sparkles className="w-3.5 h-3.5 mr-1" />AI Suggest Caption</Button>
                   {renderWindowControls(b)}
                   {renderGraph(b)}
                 </div>
@@ -725,7 +893,7 @@ export default function Step5Showcase() {
 
       {stage === "preview" && (
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-5">
-          <div className="flex items-center justify-between"><h4 className="text-white font-semibold text-base">Step 3: Preview and Publish</h4><Badge variant="warning">Publish is stubbed</Badge></div>
+          <div className="flex items-center justify-between"><h4 className="text-white font-semibold text-base">Step 3: Preview and Publish</h4><Badge variant="success">Ready to publish</Badge></div>
           <div className="rounded-xl border border-slate-700 bg-slate-950/50 p-5 space-y-4">
             <h5 className="text-2xl font-bold text-white">{headline || "Untitled Story"}</h5>
             <p className="text-sm text-slate-300">{summary}</p>
@@ -740,11 +908,11 @@ export default function Step5Showcase() {
       )}
 
       <div className="flex items-center justify-between">
-        <Button variant="secondary" onClick={prevStep}><ArrowLeft className="w-4 h-4 mr-1" />Back</Button>
+        <Button variant="secondary" onClick={prevStep} size="lg"><ArrowLeft className="w-4 h-4 mr-1" />Back</Button>
         <div className="flex items-center gap-2">
-          <Button variant="secondary" onClick={() => setStage(stage === "preview" ? "compose" : stage === "compose" ? "setup" : "setup")} disabled={stage === "setup"}>Previous Stage</Button>
+          <Button size="lg" variant="secondary" onClick={() => setStage(stage === "preview" ? "compose" : stage === "compose" ? "setup" : "setup")} disabled={stage === "setup"}>Previous Step</Button>
           {stage !== "preview" ? (
-            <Button onClick={() => setStage(stage === "setup" ? "compose" : "preview")} disabled={stage === "setup" && (!headline.trim() || !summary.trim())}>Next Stage</Button>
+            <Button size="lg" onClick={() => setStage(stage === "setup" ? "compose" : "preview")} disabled={stage === "setup" && (!headline.trim() || !summary.trim())}>Next Step</Button>
           ) : (
             <Button onClick={handlePublish} disabled={isLoading || !headline.trim() || !summary.trim() || blocks.length === 0} size="lg">
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Send className="w-4 h-4 mr-2" />}Publish Story
@@ -752,7 +920,81 @@ export default function Step5Showcase() {
           )}
         </div>
       </div>
+      {publishError && (
+        <div className="rounded-xl border border-amber-800 bg-amber-950/20 px-4 py-3 text-sm text-amber-300">
+          {publishError}
+        </div>
+      )}
     </div>
+  );
+}
+
+function BufferedInput({
+  label,
+  value,
+  onCommit,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onCommit: (next: string) => void;
+  placeholder?: string;
+}) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  const commit = () => {
+    if (draft !== value) onCommit(draft);
+  };
+
+  return (
+    <Input
+      label={label}
+      value={draft}
+      placeholder={placeholder}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+    />
+  );
+}
+
+function BufferedTextarea({
+  label,
+  value,
+  onCommit,
+  rows = 3,
+}: {
+  label: string;
+  value: string;
+  onCommit: (next: string) => void;
+  rows?: number;
+}) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  const commit = () => {
+    if (draft !== value) onCommit(draft);
+  };
+
+  return (
+    <Textarea
+      label={label}
+      value={draft}
+      rows={rows}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+    />
   );
 }
 

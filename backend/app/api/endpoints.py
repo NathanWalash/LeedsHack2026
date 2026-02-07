@@ -9,6 +9,7 @@ import hashlib
 import tempfile
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 import pandas as pd
@@ -26,6 +27,7 @@ from app.core.processing import (
 )
 from app.core.training import train_and_forecast
 from app.core.preprocessing import clean_dataframe_for_training
+from app.core.gemini import generate_chat_response
 from app.core.paths import OUTPUTS_DIR
 
 router = APIRouter()
@@ -46,6 +48,71 @@ _analysis_dir = OUTPUTS_DIR
 
 def _hash_pw(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _username_for_user_id(user_id: str | None) -> str:
+    if not user_id:
+        return "anonymous"
+    for username, payload in _users.items():
+        if payload.get("user_id") == user_id:
+            return username
+    return "anonymous"
+
+
+def _string_list(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    items: list[str] = []
+    for item in raw:
+        if item is None:
+            continue
+        text = str(item).strip()
+        if text:
+            items.append(text)
+    return items
+
+
+def _story_card(project: dict[str, Any]) -> dict[str, Any]:
+    config = project.get("config") if isinstance(project.get("config"), dict) else {}
+    categories = _string_list(config.get("categories"))
+    notebook_blocks = config.get("notebook_blocks")
+    block_count = len(notebook_blocks) if isinstance(notebook_blocks, list) else 0
+    author = _username_for_user_id(project.get("user_id"))
+    if author == "anonymous":
+        config_author = str(config.get("author_username") or "").strip()
+        if config_author:
+            author = config_author
+    cover_graph = None
+    if isinstance(notebook_blocks, list):
+        for block in notebook_blocks:
+            if isinstance(block, dict) and block.get("type") == "graph":
+                cover_graph = block.get("assetId")
+                break
+
+    return {
+        "story_id": project.get("project_id"),
+        "project_id": project.get("project_id"),
+        "title": config.get("headline") or project.get("title") or "Untitled Story",
+        "description": config.get("description") or project.get("description") or "",
+        "author": author,
+        "user_id": project.get("user_id"),
+        "categories": categories,
+        "published_at": project.get("published_at"),
+        "created_at": project.get("created_at"),
+        "use_case": project.get("use_case") or "",
+        "horizon": config.get("horizon"),
+        "baseline_model": config.get("baselineModel"),
+        "multivariate_model": config.get("multivariateModel"),
+        "drivers": _string_list(config.get("drivers")),
+        "block_count": block_count,
+        "cover_graph": cover_graph,
+        "source": "user",
+        "is_debug": False,
+    }
 
 
 def _resolve_analysis_path(path_value: str, fallback: str) -> Path:
@@ -165,6 +232,9 @@ class ProcessRequest(BaseModel):
 class ChatRequest(BaseModel):
     project_id: str
     message: str
+    page_context: str = ""
+    history: list[dict] = []
+    report_data: str | None = None
 
 
 # ─── Upload ────────────────────────────────────────────────────────────────────
@@ -672,31 +742,15 @@ async def train_model(req: TrainRequest):
 @router.post("/chat")
 async def chat(req: ChatRequest):
     """
-    Simple chat endpoint. Returns contextual responses.
-    In production, wire this to an LLM with project context.
+    Context-aware chat endpoint powered by Gemini 1.5 Flash.
+    Falls back to keyword matching when GEMINI_API_KEY is not set.
     """
-    project = _projects.get(req.project_id)
-
-    # Demo contextual responses
-    msg = req.message.lower()
-
-    if any(w in msg for w in ["hello", "hi", "hey"]):
-        reply = "Hey! I'm your Forecast Buddy. Upload a dataset and I'll help you explore patterns and build forecasts. What data are you working with?"
-    elif "upload" in msg or "file" in msg:
-        reply = "You can drag and drop a CSV or Excel file in Step 1. I'll automatically detect date columns and numeric targets for you."
-    elif "driver" in msg or "feature" in msg:
-        reply = "Drivers are external factors that might influence your data — like seasonality, holidays, or temperature. Toggle them on in Step 3 to see if they improve the forecast!"
-    elif "accuracy" in msg or "improve" in msg:
-        reply = "The multivariate model adds external drivers on top of the baseline. If a driver like 'holidays' captures real variation, you'll see the green line track reality better than the blue dashed baseline."
-    elif "forecast" in msg or "predict" in msg:
-        reply = "Once you've selected your columns and drivers, hit 'Run Forecast'. I'll train two models — a simple baseline and a gradient-boosted one with your chosen drivers."
-    else:
-        reply = f"Interesting question! I'm a demo buddy right now, so my answers are limited. In the full version, I'd use an LLM to give you deep insights about your data and forecasts."
-
-    return {
-        "role": "assistant",
-        "content": reply,
-    }
+    return await generate_chat_response(
+        message=req.message,
+        page_context=req.page_context,
+        report_data=req.report_data,
+        history=req.history,
+    )
 
 
 # ─── Auth ──────────────────────────────────────────────────────────────────────
@@ -741,6 +795,7 @@ async def login(req: AuthRequest):
 async def create_project(req: ProjectCreateRequest):
     """Create a new project for a user."""
     project_id = str(uuid.uuid4())
+    now = _now_iso()
     project = {
         "project_id": project_id,
         "user_id": req.user_id,
@@ -752,6 +807,9 @@ async def create_project(req: ProjectCreateRequest):
         "config": {},
         "files": [],
         "status": "draft",
+        "created_at": now,
+        "updated_at": now,
+        "published_at": None,
     }
     _projects[project_id] = project
 
@@ -780,6 +838,56 @@ async def get_project(project_id: str):
     return project
 
 
+@router.get("/stories")
+async def list_stories(search: str | None = None, category: str | None = None):
+    """List published stories for Explore feed."""
+    term = (search or "").strip().lower()
+    wanted_category = (category or "").strip().lower()
+
+    stories: list[dict[str, Any]] = []
+    for project in _projects.values():
+        if project.get("status") != "published":
+            continue
+        card = _story_card(project)
+
+        if term:
+            haystack = " ".join(
+                [
+                    str(card.get("title", "")),
+                    str(card.get("description", "")),
+                    str(card.get("author", "")),
+                    " ".join(card.get("categories", [])),
+                ]
+            ).lower()
+            if term not in haystack:
+                continue
+
+        if wanted_category:
+            categories = [c.lower() for c in card.get("categories", [])]
+            if wanted_category not in categories:
+                continue
+
+        stories.append(card)
+
+    stories.sort(key=lambda s: s.get("published_at") or "", reverse=True)
+    return {"stories": stories, "total": len(stories)}
+
+
+@router.get("/stories/{story_id}")
+async def get_story(story_id: str):
+    """Get full story payload for detail page."""
+    project = _projects.get(story_id)
+    if not project or project.get("status") != "published":
+        raise HTTPException(status_code=404, detail="Story not found")
+
+    config = project.get("config") if isinstance(project.get("config"), dict) else {}
+    return {
+        **_story_card(project),
+        "notebook_blocks": config.get("notebook_blocks", []),
+        "publish_mode": config.get("publish_mode", "live"),
+    }
+
+
 @router.post("/projects/update")
 async def update_project(req: ProjectUpdateRequest):
     """Update project step or config."""
@@ -794,5 +902,17 @@ async def update_project(req: ProjectUpdateRequest):
 
     if req.config is not None:
         project.setdefault("config", {}).update(req.config)
+        if not project.get("user_id"):
+            author_user_id = req.config.get("author_user_id")
+            if isinstance(author_user_id, str) and author_user_id.strip():
+                project["user_id"] = author_user_id.strip()
+        if bool(req.config.get("published")):
+            project["status"] = "published"
+            project["published_at"] = project.get("published_at") or _now_iso()
+        elif req.config.get("published") is False:
+            project["status"] = "draft"
+            project["published_at"] = None
+
+    project["updated_at"] = _now_iso()
 
     return project
