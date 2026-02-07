@@ -15,15 +15,26 @@ import {
   Hash,
   X,
   TrendingUp,
+  BriefcaseBusiness,
+  Zap,
+  HeartPulse,
+  Landmark,
+  Truck,
+  Wrench,
+  ArrowRight,
+  FolderUp,
+  Database,
+  ClipboardList,
+  Sparkles,
 } from "lucide-react";
 
 const USE_CASE_OPTIONS = [
-  { id: "retail", label: "Retail & Sales", icon: "🛒" },
-  { id: "energy", label: "Energy & Utilities", icon: "⚡" },
-  { id: "healthcare", label: "Healthcare", icon: "🏥" },
-  { id: "finance", label: "Finance", icon: "💰" },
-  { id: "supply-chain", label: "Supply Chain", icon: "📦" },
-  { id: "other", label: "Other", icon: "🔧" },
+  { id: "retail", label: "Retail & Sales", icon: <BriefcaseBusiness className="w-4 h-4" /> },
+  { id: "energy", label: "Energy & Utilities", icon: <Zap className="w-4 h-4" /> },
+  { id: "healthcare", label: "Healthcare", icon: <HeartPulse className="w-4 h-4" /> },
+  { id: "finance", label: "Finance", icon: <Landmark className="w-4 h-4" /> },
+  { id: "supply-chain", label: "Supply Chain", icon: <Truck className="w-4 h-4" /> },
+  { id: "other", label: "Other", icon: <Wrench className="w-4 h-4" /> },
 ];
 
 export default function Step1GetStarted() {
@@ -198,9 +209,26 @@ export default function Step1GetStarted() {
 
   return (
     <div className="space-y-8">
+      <div className="rounded-2xl border border-slate-800 bg-gradient-to-r from-slate-900/80 to-slate-800/40 p-5">
+        <div className="flex items-start gap-3">
+          <div className="rounded-lg bg-teal-500/10 p-2 text-teal-300">
+            <ClipboardList className="w-5 h-5" />
+          </div>
+          <div className="space-y-1">
+            <h2 className="text-base font-semibold text-white">Step 1: Project Setup</h2>
+            <p className="text-sm text-slate-400">
+              Add project context and upload your datasets to begin the forecast pipeline.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Project Details */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-5">
-        <h3 className="text-lg font-semibold text-white">Project Details</h3>
+        <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+          <Sparkles className="w-5 h-5 text-teal-300" />
+          Project Details
+        </h3>
         <Input
           label="Project Title"
           placeholder="e.g. Weekly Sales Forecast"
@@ -218,12 +246,18 @@ export default function Step1GetStarted() {
           options={USE_CASE_OPTIONS}
           selected={useCase}
           onSelect={setUseCase}
+          layout="grid"
+          columns={2}
+          fullWidth
         />
       </div>
 
       {/* Upload */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-        <h3 className="text-lg font-semibold text-white mb-4">Upload Data</h3>
+        <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <FolderUp className="w-5 h-5 text-teal-300" />
+          Upload Data
+        </h3>
 
         <div
           {...getRootProps()}
@@ -296,7 +330,10 @@ export default function Step1GetStarted() {
       {/* Optional Driver Upload */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
         <div className="flex items-center gap-3 mb-4">
-          <h3 className="text-lg font-semibold text-white">Driver Data</h3>
+          <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <Database className="w-5 h-5 text-blue-300" />
+            Driver Data
+          </h3>
           <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-500">
             Optional
           </span>
@@ -323,7 +360,7 @@ export default function Step1GetStarted() {
                   : "Drag & drop a driver data file, or click to browse"}
               </p>
               <p className="text-xs text-slate-600 mt-1">
-                Same formats supported — should share a date column with your main data
+                Same formats supported - should share a date column with your main data
               </p>
             </div>
 
@@ -398,7 +435,7 @@ export default function Step1GetStarted() {
                         >
                           <div>{col}</div>
                           <div className="text-[10px] font-normal text-slate-600 mt-0.5">
-                            {driverColumnDtypes[col] || "—"}
+                            {driverColumnDtypes[col] || "-"}
                           </div>
                         </th>
                       ))}
@@ -480,7 +517,7 @@ export default function Step1GetStarted() {
                     >
                       <div>{col}</div>
                       <div className="text-[10px] font-normal text-slate-600 mt-0.5">
-                        {columnDtypes[col] || "—"}
+                        {columnDtypes[col] || "-"}
                       </div>
                     </th>
                   ))}
@@ -515,9 +552,11 @@ export default function Step1GetStarted() {
       {/* Continue */}
       <div className="flex justify-end">
         <Button onClick={handleContinue} disabled={!canContinue} size="lg">
-          Continue to Process Data →
+          Continue to Process Data
+          <ArrowRight className="w-4 h-4 ml-2" />
         </Button>
       </div>
     </div>
   );
 }
+
