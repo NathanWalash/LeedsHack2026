@@ -16,6 +16,7 @@ import {
   Legend,
   BarChart,
   Bar,
+  ReferenceArea,
 } from "recharts";
 
 type SectionOption = {
@@ -54,6 +55,8 @@ const SECTION_OPTIONS: SectionOption[] = [
 const CORE_SECTIONS = SECTION_OPTIONS.filter((s) => s.group === "core").map((s) => s.id);
 const ALL_SECTIONS = SECTION_OPTIONS.map((s) => s.id);
 
+type LooseRecord = Record<string, string | number | null | undefined>;
+
 function parseTimestamp(value: string) {
   const ts = Date.parse(value);
   return Number.isFinite(ts) ? ts : null;
@@ -62,9 +65,10 @@ function parseTimestamp(value: string) {
 function formatShortDateFromTs(value: number) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return String(value);
-  return `${d.getFullYear().toString().slice(2)}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = String(d.getFullYear());
+  return `${day}-${month}-${year}`;
 }
 
 function formatLongDateFromTs(value: number) {
@@ -75,6 +79,11 @@ function formatLongDateFromTs(value: number) {
     month: "short",
     day: "2-digit",
   });
+}
+
+function formatDateString(value: string) {
+  const ts = parseTimestamp(value);
+  return ts === null ? value : formatShortDateFromTs(ts);
 }
 
 function formatAxisNumber(value: number) {
@@ -92,7 +101,9 @@ function computeDomain<T extends Record<string, unknown>>(
   const values: number[] = [];
   for (const row of data) {
     for (const key of keys) {
-      const n = Number(row[key]);
+      const raw = row[key];
+      if (raw === null || raw === undefined || raw === "") continue;
+      const n = Number(raw);
       if (Number.isFinite(n)) values.push(n);
     }
   }
@@ -123,6 +134,20 @@ function tooltipValue(value: unknown) {
   const n = Number(value);
   if (!Number.isFinite(n)) return String(value);
   return new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 }).format(n);
+}
+
+function getDateString(row: LooseRecord): string | null {
+  const candidate = row.week_ending ?? row.date ?? row.index;
+  return typeof candidate === "string" && candidate.trim() ? candidate : null;
+}
+
+function getPrimaryNumericValue(row: LooseRecord): number | null {
+  for (const [key, raw] of Object.entries(row)) {
+    if (key === "week_ending" || key === "date" || key === "index") continue;
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
 }
 
 export default function Step4Analysis() {
@@ -179,6 +204,52 @@ export default function Step4Analysis() {
     [analysis]
   );
 
+  const historicalTargetData = useMemo(
+    () =>
+      (analysis?.datasets.target_series || [])
+        .map((row) => {
+          const asRecord = row as LooseRecord;
+          const dateString = getDateString(asRecord);
+          if (!dateString) return null;
+          const ts = parseTimestamp(dateString);
+          const actual = getPrimaryNumericValue(asRecord);
+          if (ts === null || actual === null) return null;
+          return {
+            ts,
+            week_ending: dateString,
+            actual,
+          };
+        })
+        .filter((r): r is { ts: number; week_ending: string; actual: number } => r !== null)
+        .sort((a, b) => a.ts - b.ts),
+    [analysis]
+  );
+
+  const testFitCombinedData = useMemo(() => {
+    const predMap = new Map(
+      testFitData.map((r) => [
+        r.ts,
+        {
+          baseline: r.baseline,
+          multivariate: r.multivariate,
+          actual_test: r.actual,
+        },
+      ])
+    );
+
+    return historicalTargetData.map((r) => {
+      const pred = predMap.get(r.ts);
+      return {
+        ts: r.ts,
+        week_ending: r.week_ending,
+        actual: r.actual,
+        baseline: pred ? pred.baseline : null,
+        multivariate: pred ? pred.multivariate : null,
+        actual_test: pred ? pred.actual_test : null,
+      };
+    });
+  }, [historicalTargetData, testFitData]);
+
   const forecastData = useMemo(
     () =>
       (analysis?.datasets.forecast || [])
@@ -217,23 +288,35 @@ export default function Step4Analysis() {
   );
 
   const driverData = useMemo(() => {
-    const holidayMap = new Map(
-      (analysis?.datasets.holiday_weekly || []).map((r) => [r.week_ending, Number(r.holiday_count)])
-    );
+    const holidayMap = new Map<number, number>();
+    for (const row of analysis?.datasets.holiday_weekly || []) {
+      const asRecord = row as LooseRecord;
+      const dateString = getDateString(asRecord);
+      if (!dateString) continue;
+      const ts = parseTimestamp(dateString);
+      if (ts === null) continue;
+      const count = Number(asRecord.holiday_count);
+      holidayMap.set(ts, Number.isFinite(count) ? count : 0);
+    }
+
     return (analysis?.datasets.temp_weekly || [])
       .map((r) => ({
         ts: parseTimestamp(r.date),
         week_ending: r.date,
         temp_mean: Number(r.temp_mean),
-        holiday_count: holidayMap.get(r.date) || 0,
+        holiday_count: 0,
       }))
       .filter((r): r is { ts: number; week_ending: string; temp_mean: number; holiday_count: number } => r.ts !== null)
+      .map((r) => ({
+        ...r,
+        holiday_count: holidayMap.get(r.ts) || 0,
+      }))
       .sort((a, b) => a.ts - b.ts);
   }, [analysis]);
 
   const testFitDomain = useMemo(
-    () => computeDomain(testFitData, ["actual", "baseline", "multivariate"]),
-    [testFitData]
+    () => computeDomain(testFitCombinedData, ["actual", "baseline", "multivariate"]),
+    [testFitCombinedData]
   );
   const forecastDomain = useMemo(
     () => computeDomain(forecastData, ["baseline_forecast", "multivariate_forecast"]),
@@ -245,6 +328,8 @@ export default function Step4Analysis() {
   );
   const tempDomain = useMemo(() => computeDomain(driverData, ["temp_mean"]), [driverData]);
   const holidayDomain = useMemo(() => computeDomain(driverData, ["holiday_count"], true), [driverData]);
+  const testWindowStartTs = testFitData.length > 0 ? testFitData[0].ts : null;
+  const testWindowEndTs = testFitData.length > 0 ? testFitData[testFitData.length - 1].ts : null;
 
   const forecastTableRows = useMemo(() => forecastData.slice(0, 8), [forecastData]);
 
@@ -260,6 +345,10 @@ export default function Step4Analysis() {
   const fmt = new Intl.NumberFormat("en-GB");
   const pct = new Intl.NumberFormat("en-GB", { maximumFractionDigits: 2 });
   const targetLabel = analysis?.manifest.data_summary.target_name || "Target";
+  const evaluationSectionIds = ["summary", "metrics", "test-fit", "error-trend", "feature-importance"];
+  const predictionSectionIds = ["future-forecast", "driver-series", "forecast-table"];
+  const showEvaluation = selectedSections.some((id) => evaluationSectionIds.includes(id));
+  const showPrediction = selectedSections.some((id) => predictionSectionIds.includes(id));
 
   return (
     <div className="space-y-8">
@@ -340,6 +429,15 @@ export default function Step4Analysis() {
 
       {!loading && analysis && (
         <div className="space-y-6">
+          {showEvaluation && (
+            <div className="rounded-2xl border border-sky-800/60 bg-sky-950/20 px-4 py-3">
+              <p className="text-sm font-semibold text-sky-300">Phase 1: Evaluation and Metrics (Train/Test)</p>
+              <p className="text-xs text-sky-200/80 mt-1">
+                Use this section to judge model quality on the held-out 20 percent test window.
+              </p>
+            </div>
+          )}
+
           {selectedSections.includes("summary") && (
             <Card>
               <CardHeader>
@@ -386,16 +484,16 @@ export default function Step4Analysis() {
               </CardHeader>
               <CardContent>
                 <p className="text-xs text-slate-500 mb-1">
-                  X-axis: week ending dates from `artifacts/test_predictions.csv` (sorted chronologically).
+                  X-axis: full timeline from `artifacts/target_series.csv`, with the final test region highlighted.
                 </p>
                 <p className="text-xs text-slate-500 mb-3">
-                  Y-axis: {targetLabel} count, sourced from `actual`, `baseline`, and `multivariate` columns.
+                  Y-axis: {targetLabel} count. Baseline and multivariate lines are only shown in the test window.
                 </p>
-                {testFitData.length === 0 ? (
+                {testFitCombinedData.length === 0 ? (
                   <EmptyState text="No test_predictions data found." />
                 ) : (
                   <ChartWrap>
-                    <LineChart data={testFitData}>
+                    <LineChart data={testFitCombinedData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                       <XAxis
                         dataKey="ts"
@@ -404,6 +502,9 @@ export default function Step4Analysis() {
                         domain={["dataMin", "dataMax"]}
                         tickFormatter={(v) => formatShortDateFromTs(Number(v))}
                         minTickGap={28}
+                        angle={-25}
+                        textAnchor="end"
+                        height={56}
                         tick={{ fontSize: 11 }}
                       />
                       <YAxis domain={testFitDomain} tickFormatter={formatAxisNumber} tick={{ fontSize: 11 }} />
@@ -412,58 +513,26 @@ export default function Step4Analysis() {
                         formatter={tooltipValue}
                       />
                       <Legend />
+                      {testWindowStartTs !== null && testWindowEndTs !== null && (
+                        <ReferenceArea
+                          x1={testWindowStartTs}
+                          x2={testWindowEndTs}
+                          fill="#0f172a"
+                          fillOpacity={0.35}
+                          ifOverflow="extendDomain"
+                        />
+                      )}
                       <Line type="monotone" dataKey="actual" stroke="#cbd5e1" dot={false} strokeWidth={2} />
-                      <Line type="monotone" dataKey="baseline" stroke="#3b82f6" dot={false} />
-                      <Line type="monotone" dataKey="multivariate" stroke="#14b8a6" dot={false} />
-                    </LineChart>
-                  </ChartWrap>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {selectedSections.includes("future-forecast") && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Future Forecast</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-slate-500 mb-1">
-                  X-axis: future week ending dates from `forecasts/forecast.csv` (sorted chronologically).
-                </p>
-                <p className="text-xs text-slate-500 mb-3">
-                  Y-axis: predicted {targetLabel} count from `baseline_forecast` and `multivariate_forecast`.
-                </p>
-                {forecastData.length === 0 ? (
-                  <EmptyState text="No forecast data found." />
-                ) : (
-                  <ChartWrap>
-                    <LineChart data={forecastData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                      <XAxis
-                        dataKey="ts"
-                        type="number"
-                        scale="time"
-                        domain={["dataMin", "dataMax"]}
-                        tickFormatter={(v) => formatShortDateFromTs(Number(v))}
-                        minTickGap={28}
-                        tick={{ fontSize: 11 }}
-                      />
-                      <YAxis domain={forecastDomain} tickFormatter={formatAxisNumber} tick={{ fontSize: 11 }} />
-                      <Tooltip
-                        labelFormatter={(label) => formatLongDateFromTs(Number(label))}
-                        formatter={tooltipValue}
-                      />
-                      <Legend />
-                      <Line type="monotone" dataKey="baseline_forecast" name="baseline" stroke="#3b82f6" dot={false} />
                       <Line
                         type="monotone"
-                        dataKey="multivariate_forecast"
-                        name="multivariate"
-                        stroke="#14b8a6"
+                        dataKey="actual_test"
+                        stroke="#94a3b8"
                         dot={false}
-                        strokeWidth={2}
+                        strokeDasharray="4 3"
+                        name="actual (test)"
                       />
+                      <Line type="monotone" dataKey="baseline" stroke="#3b82f6" dot={false} />
+                      <Line type="monotone" dataKey="multivariate" stroke="#14b8a6" dot={false} />
                     </LineChart>
                   </ChartWrap>
                 )}
@@ -493,6 +562,9 @@ export default function Step4Analysis() {
                         domain={["dataMin", "dataMax"]}
                         tickFormatter={(v) => formatShortDateFromTs(Number(v))}
                         minTickGap={28}
+                        angle={-25}
+                        textAnchor="end"
+                        height={56}
                         tick={{ fontSize: 11 }}
                       />
                       <YAxis domain={errorDomain} tickFormatter={formatAxisNumber} tick={{ fontSize: 11 }} />
@@ -503,47 +575,6 @@ export default function Step4Analysis() {
                       <Legend />
                       <Line type="monotone" dataKey="baseline_error" stroke="#3b82f6" dot={false} />
                       <Line type="monotone" dataKey="multivariate_error" stroke="#14b8a6" dot={false} />
-                    </LineChart>
-                  </ChartWrap>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {selectedSections.includes("driver-series") && (
-            <Card>
-              <CardHeader>
-                <CardTitle>Driver Signals</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-slate-500 mb-3">
-                  Left Y-axis: weekly mean temperature from `artifacts/temp_weekly.csv`. Right Y-axis: holiday count
-                  from `artifacts/holiday_weekly.csv`.
-                </p>
-                {driverData.length === 0 ? (
-                  <EmptyState text="No driver data found." />
-                ) : (
-                  <ChartWrap>
-                    <LineChart data={driverData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                      <XAxis
-                        dataKey="ts"
-                        type="number"
-                        scale="time"
-                        domain={["dataMin", "dataMax"]}
-                        tickFormatter={(v) => formatShortDateFromTs(Number(v))}
-                        minTickGap={28}
-                        tick={{ fontSize: 11 }}
-                      />
-                      <YAxis yAxisId="left" domain={tempDomain} tick={{ fontSize: 11 }} />
-                      <YAxis yAxisId="right" orientation="right" domain={holidayDomain} tick={{ fontSize: 11 }} />
-                      <Tooltip
-                        labelFormatter={(label) => formatLongDateFromTs(Number(label))}
-                        formatter={tooltipValue}
-                      />
-                      <Legend />
-                      <Line yAxisId="left" type="monotone" dataKey="temp_mean" stroke="#22d3ee" dot={false} />
-                      <Line yAxisId="right" type="monotone" dataKey="holiday_count" stroke="#f59e0b" dot={false} />
                     </LineChart>
                   </ChartWrap>
                 )}
@@ -578,6 +609,111 @@ export default function Step4Analysis() {
             </Card>
           )}
 
+          {showPrediction && (
+            <div className="rounded-2xl border border-emerald-800/60 bg-emerald-950/20 px-4 py-3">
+              <p className="text-sm font-semibold text-emerald-300">Phase 2: Prediction and Forecast</p>
+              <p className="text-xs text-emerald-200/80 mt-1">
+                Use this section to review forward-looking forecasts generated after model training.
+              </p>
+            </div>
+          )}
+
+          {selectedSections.includes("future-forecast") && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Future Forecast</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-slate-500 mb-1">
+                  X-axis: future week ending dates from `forecasts/forecast.csv` (sorted chronologically).
+                </p>
+                <p className="text-xs text-slate-500 mb-3">
+                  Y-axis: predicted {targetLabel} count from `baseline_forecast` and `multivariate_forecast`.
+                </p>
+                {forecastData.length === 0 ? (
+                  <EmptyState text="No forecast data found." />
+                ) : (
+                  <ChartWrap>
+                    <LineChart data={forecastData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                      <XAxis
+                        dataKey="ts"
+                        type="number"
+                        scale="time"
+                        domain={["dataMin", "dataMax"]}
+                        tickFormatter={(v) => formatShortDateFromTs(Number(v))}
+                        minTickGap={28}
+                        angle={-25}
+                        textAnchor="end"
+                        height={56}
+                        tick={{ fontSize: 11 }}
+                      />
+                      <YAxis domain={forecastDomain} tickFormatter={formatAxisNumber} tick={{ fontSize: 11 }} />
+                      <Tooltip
+                        labelFormatter={(label) => formatLongDateFromTs(Number(label))}
+                        formatter={tooltipValue}
+                      />
+                      <Legend />
+                      <Line type="monotone" dataKey="baseline_forecast" name="baseline" stroke="#3b82f6" dot={false} />
+                      <Line
+                        type="monotone"
+                        dataKey="multivariate_forecast"
+                        name="multivariate"
+                        stroke="#14b8a6"
+                        dot={false}
+                        strokeWidth={2}
+                      />
+                    </LineChart>
+                  </ChartWrap>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {selectedSections.includes("driver-series") && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Driver Signals</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-xs text-slate-500 mb-3">
+                  Left Y-axis: weekly mean temperature from `artifacts/temp_weekly.csv`. Right Y-axis: holiday count
+                  from `artifacts/holiday_weekly.csv`.
+                </p>
+                {driverData.length === 0 ? (
+                  <EmptyState text="No driver data found." />
+                ) : (
+                  <ChartWrap>
+                    <LineChart data={driverData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                      <XAxis
+                        dataKey="ts"
+                        type="number"
+                        scale="time"
+                        domain={["dataMin", "dataMax"]}
+                        tickFormatter={(v) => formatShortDateFromTs(Number(v))}
+                        minTickGap={28}
+                        angle={-25}
+                        textAnchor="end"
+                        height={56}
+                        tick={{ fontSize: 11 }}
+                      />
+                      <YAxis yAxisId="left" domain={tempDomain} tick={{ fontSize: 11 }} />
+                      <YAxis yAxisId="right" orientation="right" domain={holidayDomain} tick={{ fontSize: 11 }} />
+                      <Tooltip
+                        labelFormatter={(label) => formatLongDateFromTs(Number(label))}
+                        formatter={tooltipValue}
+                      />
+                      <Legend />
+                      <Line yAxisId="left" type="monotone" dataKey="temp_mean" stroke="#22d3ee" dot={false} />
+                      <Line yAxisId="right" type="monotone" dataKey="holiday_count" stroke="#f59e0b" dot={false} />
+                    </LineChart>
+                  </ChartWrap>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {selectedSections.includes("forecast-table") && (
             <Card>
               <CardHeader>
@@ -599,7 +735,7 @@ export default function Step4Analysis() {
                       <tbody>
                         {forecastTableRows.map((row) => (
                           <tr key={row.week_ending} className="border-b border-slate-800/70">
-                            <td className="py-2 text-slate-300">{row.week_ending}</td>
+                            <td className="py-2 text-slate-300">{formatDateString(row.week_ending)}</td>
                             <td className="py-2 text-slate-300">{fmt.format(row.baseline_forecast)}</td>
                             <td className="py-2 text-slate-200">{fmt.format(row.multivariate_forecast)}</td>
                           </tr>

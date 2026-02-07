@@ -162,7 +162,9 @@ export interface AnalysisBundle {
       temp_mean: number;
     }>;
     holiday_weekly: Array<{
-      week_ending: string;
+      week_ending?: string;
+      index?: string;
+      date?: string;
       holiday_count: number;
     }>;
   };
