@@ -150,7 +150,7 @@ function formatDecimal(value: number, maxFractionDigits = 2) {
 }
 
 function getDateString(row: LooseRecord): string | null {
-  const candidate = row.week_ending ?? row.date ?? row.index;
+  const candidate = row.week_ending ?? row.date ?? row.index ?? row.period;
   return typeof candidate === "string" && candidate.trim() ? candidate : null;
 }
 
@@ -161,6 +161,30 @@ function getPrimaryNumericValue(row: LooseRecord): number | null {
     if (Number.isFinite(n)) return n;
   }
   return null;
+}
+
+function getStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((v) => (v == null ? "" : String(v).trim()))
+    .filter((v) => v.length > 0);
+}
+
+function prettifyDriverLabel(key: string): string {
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function shouldUseBarForDriver(rows: Array<Record<string, unknown>>, key: string): boolean {
+  const values = rows
+    .map((r) => Number(r[key]))
+    .filter((n) => Number.isFinite(n));
+  if (values.length === 0) return false;
+  const allIntegers = values.every((n) => Number.isInteger(n));
+  const max = Math.max(...values);
+  const unique = new Set(values).size;
+  return allIntegers && max <= 20 && unique <= 10;
 }
 
 function getFullRangeFromTimestamps(timestamps: number[]) {
@@ -408,53 +432,182 @@ export default function Step4Analysis() {
   );
 
   const driverData = useMemo(() => {
-    const holidayMap = new Map<number, number>();
+    type DriverRow = { ts: number; week_ending: string } & Record<string, number | string | null>;
+    const merged = new Map<number, DriverRow>();
+    const settings = analysis?.manifest?.settings || {};
+    const preferredDriverKeys = Array.from(
+      new Set([
+        ...getStringArray(settings["selected_drivers"]),
+        ...getStringArray(settings["driver_columns_used"]),
+      ])
+    );
+
+    const genericSeries = analysis?.datasets.driver_series || [];
+    if (genericSeries.length > 0) {
+      for (const row of genericSeries) {
+        const asRecord = row as LooseRecord;
+        const dateString = getDateString(asRecord);
+        if (!dateString) continue;
+        const ts = parseTimestamp(dateString);
+        if (ts === null) continue;
+
+        const existing = merged.get(ts) || { ts, week_ending: dateString };
+        const next: DriverRow = { ...existing, ts, week_ending: existing.week_ending || dateString };
+
+        for (const [key, raw] of Object.entries(asRecord)) {
+          if (key === "week_ending" || key === "date" || key === "index") continue;
+          const n = Number(raw);
+          next[key] = Number.isFinite(n) ? n : null;
+        }
+        merged.set(ts, next);
+      }
+      return Array.from(merged.values()).sort((a, b) => a.ts - b.ts);
+    }
+
+    const featureRows = analysis?.datasets.feature_frame || [];
+    if (featureRows.length > 0) {
+      const candidateKeys = new Set<string>();
+      if (preferredDriverKeys.length > 0) {
+        for (const key of preferredDriverKeys) candidateKeys.add(key);
+      } else {
+        const sample = featureRows[0] as LooseRecord;
+        for (const key of Object.keys(sample)) {
+          if (["week_ending", "date", "index", "period", "y"].includes(key)) continue;
+          if (key.startsWith("target_lag_") || key.endsWith("_lag_1") || key.endsWith("_lag_2")) continue;
+          candidateKeys.add(key);
+        }
+      }
+
+      for (const row of featureRows) {
+        const asRecord = row as LooseRecord;
+        const dateString = getDateString(asRecord);
+        if (!dateString) continue;
+        const ts = parseTimestamp(dateString);
+        if (ts === null) continue;
+
+        const existing = merged.get(ts) || { ts, week_ending: dateString };
+        const next: DriverRow = { ...existing, ts, week_ending: existing.week_ending || dateString };
+        let assigned = false;
+
+        for (const key of candidateKeys) {
+          if (!(key in asRecord)) continue;
+          const n = Number(asRecord[key]);
+          if (Number.isFinite(n)) {
+            next[key] = n;
+            assigned = true;
+          }
+        }
+
+        if (assigned) merged.set(ts, next);
+      }
+
+      if (merged.size > 0) {
+        return Array.from(merged.values()).sort((a, b) => a.ts - b.ts);
+      }
+    }
+
+    for (const row of analysis?.datasets.temp_weekly || []) {
+      const asRecord = row as LooseRecord;
+      const dateString = getDateString(asRecord);
+      if (!dateString) continue;
+      const ts = parseTimestamp(dateString);
+      if (ts === null) continue;
+
+      const tempRaw =
+        asRecord.temp_mean ??
+        asRecord.value ??
+        asRecord.temp ??
+        getPrimaryNumericValue(asRecord);
+      const temp = Number(tempRaw);
+      const existing = merged.get(ts) || { ts, week_ending: dateString };
+      merged.set(ts, {
+        ...existing,
+        ts,
+        week_ending: existing.week_ending || dateString,
+        temp_mean: Number.isFinite(temp) ? temp : null,
+      });
+    }
+
     for (const row of analysis?.datasets.holiday_weekly || []) {
       const asRecord = row as LooseRecord;
       const dateString = getDateString(asRecord);
       if (!dateString) continue;
       const ts = parseTimestamp(dateString);
       if (ts === null) continue;
-      const count = Number(asRecord.holiday_count);
-      holidayMap.set(ts, Number.isFinite(count) ? count : 0);
+
+      const countRaw = asRecord.holiday_count ?? asRecord.value ?? getPrimaryNumericValue(asRecord);
+      const count = Number(countRaw);
+      const existing = merged.get(ts) || { ts, week_ending: dateString };
+      merged.set(ts, {
+        ...existing,
+        ts,
+        week_ending: existing.week_ending || dateString,
+        holiday_count: Number.isFinite(count) ? count : null,
+      });
     }
 
-    return (analysis?.datasets.temp_weekly || [])
-      .map((row) => {
-        const asRecord = row as LooseRecord;
-        const dateString = getDateString(asRecord);
-        if (!dateString) {
-          return null;
-        }
-        const tempRaw =
-          asRecord.temp_mean ??
-          asRecord.value ??
-          asRecord.temp ??
-          getPrimaryNumericValue(asRecord);
-        const temp = Number(tempRaw);
-        return {
-          ts: parseTimestamp(dateString),
-          week_ending: dateString,
-          temp_mean: Number.isFinite(temp) ? temp : 0,
-          holiday_count: 0,
-        };
-      })
-      .filter((r): r is { ts: number | null; week_ending: string; temp_mean: number; holiday_count: number } => r !== null)
-      .filter((r): r is { ts: number; week_ending: string; temp_mean: number; holiday_count: number } => r.ts !== null)
-      .map((r) => ({
-        ...r,
-        holiday_count: holidayMap.get(r.ts) || 0,
-      }))
-      .sort((a, b) => a.ts - b.ts);
+    return Array.from(merged.values()).sort((a, b) => a.ts - b.ts);
   }, [analysis]);
+
+  const driverSeriesKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const row of driverData as Array<Record<string, unknown>>) {
+      for (const key of Object.keys(row)) {
+        if (key === "ts" || key === "week_ending") continue;
+        keys.add(key);
+      }
+    }
+
+    const settings = analysis?.manifest?.settings || {};
+    const preferred = [
+      ...getStringArray(settings["selected_drivers"]),
+      ...getStringArray(settings["driver_columns_used"]),
+    ];
+
+    const ordered: string[] = [];
+    for (const key of preferred) {
+      if (keys.has(key) && !ordered.includes(key)) ordered.push(key);
+    }
+    for (const key of keys) {
+      if (!ordered.includes(key)) ordered.push(key);
+    }
+    return ordered;
+  }, [analysis, driverData]);
 
   useEffect(() => {
     setTestRange((prev) => normalizeRange(testFitCombinedData, prev));
   }, [testFitCombinedData]);
 
   useEffect(() => {
-    setForecastRange((prev) => normalizeRange(forecastCombinedData, prev));
-  }, [forecastCombinedData]);
+    setForecastRange((prev) => {
+      if (forecastCombinedData.length === 0) return { startTs: null, endTs: null };
+
+      const hasExistingWindow = prev.startTs !== null || prev.endTs !== null;
+      if (hasExistingWindow) return normalizeRange(forecastCombinedData, prev);
+
+      const freq = analysis?.manifest?.data_summary?.freq || "W-SUN";
+      const contextPoints = freq.startsWith("MS")
+        ? 36
+        : freq.startsWith("QS")
+          ? 20
+          : freq.startsWith("YS")
+            ? 12
+            : 52;
+
+      const forecastStartTs = forecastData.length > 0 ? forecastData[0].ts : null;
+      const anchorIdx =
+        forecastStartTs === null
+          ? forecastCombinedData.length - 1
+          : Math.max(0, forecastCombinedData.findIndex((r) => r.ts === forecastStartTs));
+      const startIdx = Math.max(0, anchorIdx - contextPoints);
+      const endIdx = forecastCombinedData.length - 1;
+
+      return {
+        startTs: forecastCombinedData[startIdx].ts,
+        endTs: forecastCombinedData[endIdx].ts,
+      };
+    });
+  }, [analysis, forecastCombinedData, forecastData]);
 
   useEffect(() => {
     setDriverRange((prev) => normalizeRange(driverData, prev));
@@ -482,8 +635,6 @@ export default function Step4Analysis() {
     () => computeDomain(errorTrendData, ["baseline_error", "multivariate_error"], true),
     [errorTrendData]
   );
-  const tempDomain = useMemo(() => computeDomain(driverVisibleRows, ["temp_mean"]), [driverVisibleRows]);
-  const holidayDomain = useMemo(() => computeDomain(driverVisibleRows, ["holiday_count"], true), [driverVisibleRows]);
   const testWindowStartTs = testFitData.length > 0 ? testFitData[0].ts : null;
   const testWindowEndTs = testFitData.length > 0 ? testFitData[testFitData.length - 1].ts : null;
   const forecastWindowStartTs = forecastData.length > 0 ? forecastData[0].ts : null;
@@ -521,8 +672,6 @@ export default function Step4Analysis() {
   const metrics = analysis?.manifest?.metrics;
   const baselineRmse = Number(metrics?.baseline_rmse);
   const multivariateRmse = Number(metrics?.multivariate_rmse);
-  const baselineNrmsePct = Number(metrics?.baseline_nrmse_pct);
-  const multivariateNrmsePct = Number(metrics?.multivariate_nrmse_pct);
   const improvementPct = Number(metrics?.improvement_pct);
   const targetLabel = analysis?.manifest.data_summary.target_name || "Target";
   const slideFlow: SlideSpec[] = [
@@ -672,9 +821,17 @@ export default function Step4Analysis() {
                     />
                     <InfoCard
                       label="Models"
-                      value={`${String(analysis.manifest.settings.baseline_model)} + ${String(
-                        analysis.manifest.settings.multi_model
-                      )}`}
+                      value={`${
+                        analysis.manifest.settings["baseline_model"] != null
+                          ? String(analysis.manifest.settings["baseline_model"])
+                          : "N/A"
+                      } + ${
+                        analysis.manifest.settings["multivariate_model"] != null
+                          ? String(analysis.manifest.settings["multivariate_model"])
+                          : analysis.manifest.settings["multi_model"] != null
+                            ? String(analysis.manifest.settings["multi_model"])
+                            : "N/A"
+                      }`}
                       help="Baseline is the simpler reference model. Multivariate uses extra driver signals."
                     />
                   </div>
@@ -692,25 +849,6 @@ export default function Step4Analysis() {
                   value={Number.isFinite(multivariateRmse) ? fmt.format(multivariateRmse) : "N/A"}
                   tone="success"
                   explanation="Same metric for the multivariate model. Lower than baseline means better accuracy."
-                />
-                <KpiCard
-                  title="Multivariate NRMSE"
-                  value={Number.isFinite(multivariateNrmsePct) ? `${pct.format(multivariateNrmsePct)}%` : "N/A"}
-                  tone={
-                    Number.isFinite(baselineNrmsePct) && Number.isFinite(multivariateNrmsePct)
-                      ? nrmseImproved
-                        ? "success"
-                        : "danger"
-                      : "neutral"
-                  }
-                  status={
-                    Number.isFinite(baselineNrmsePct) && Number.isFinite(multivariateNrmsePct)
-                      ? nrmseImproved
-                        ? "improved"
-                        : "worse"
-                      : "reference"
-                  }
-                  explanation="Normalized RMSE as percent of average actual value. Lower is better."
                 />
                 <KpiCard
                   title="Improvement"
@@ -1000,102 +1138,100 @@ export default function Step4Analysis() {
             <div className="space-y-3">
               <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3">
                 <p className="text-sm text-slate-300">
-                  These two driver charts sit side by side so you can compare weekly temperature and holiday patterns in one place.
+                  Driver charts are generated from the driver columns used in this run.
                 </p>
               </div>
-              {driverData.length === 0 ? (
+              {driverData.length === 0 || driverSeriesKeys.length === 0 ? (
                 <EmptyState text="No driver data found." />
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Driver Signal: Temperature</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-xs text-slate-500 mb-3">Y-axis: weekly average temperature.</p>
-                      <ChartWrap>
-                        <LineChart data={driverVisibleRows}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                          <XAxis
-                            dataKey="ts"
-                            type="number"
-                            scale="time"
-                            domain={["dataMin", "dataMax"]}
-                            tickFormatter={(v) => formatShortDateFromTs(Number(v))}
-                            minTickGap={28}
-                            angle={-25}
-                            textAnchor="end"
-                            height={56}
-                            tick={{ fontSize: 11 }}
-                          />
-                          <YAxis
-                            domain={tempDomain}
-                            tickFormatter={(v) => formatDecimal(Number(v), 1)}
-                            tick={{ fontSize: 11 }}
-                          />
-                          <Tooltip
-                            labelFormatter={(label) => formatLongDateFromTs(Number(label))}
-                            formatter={tooltipValue}
-                          />
-                          <Legend />
-                          <Line type="monotone" dataKey="temp_mean" stroke="#22d3ee" dot={false} />
-                        </LineChart>
-                      </ChartWrap>
-                    </CardContent>
-                  </Card>
-
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>Driver Signal: Holidays</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <p className="text-xs text-slate-500 mb-3">Y-axis: number of holidays each week.</p>
-                      <ChartWrap>
-                        <BarChart data={driverVisibleRows}>
-                          <defs>
-                            <linearGradient id="holidayBarGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor="#fbbf24" stopOpacity={0.98} />
-                              <stop offset="60%" stopColor="#f59e0b" stopOpacity={0.9} />
-                              <stop offset="100%" stopColor="#b45309" stopOpacity={0.82} />
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid strokeDasharray="2 4" stroke="#334155" />
-                          <XAxis
-                            dataKey="ts"
-                            type="number"
-                            scale="time"
-                            domain={["dataMin", "dataMax"]}
-                            tickFormatter={(v) => formatShortDateFromTs(Number(v))}
-                            minTickGap={28}
-                            angle={-25}
-                            textAnchor="end"
-                            height={56}
-                            tick={{ fontSize: 11 }}
-                          />
-                          <YAxis domain={holidayDomain} tickFormatter={formatAxisNumber} tick={{ fontSize: 11 }} />
-                          <Tooltip
-                            labelFormatter={(label) => formatLongDateFromTs(Number(label))}
-                            formatter={tooltipValue}
-                            cursor={{ fill: "rgba(148, 163, 184, 0.08)" }}
-                            contentStyle={{
-                              backgroundColor: "#0f172a",
-                              border: "1px solid #334155",
-                              borderRadius: "10px",
-                            }}
-                          />
-                          <Legend />
-                          <Bar
-                            dataKey="holiday_count"
-                            name="holiday count"
-                            fill="url(#holidayBarGradient)"
-                            radius={[7, 7, 0, 0]}
-                            barSize={16}
-                            maxBarSize={24}
-                          />
-                        </BarChart>
-                      </ChartWrap>
-                    </CardContent>
-                  </Card>
+                  {driverSeriesKeys.map((key) => {
+                    const isBar = shouldUseBarForDriver(
+                      driverVisibleRows as Array<Record<string, unknown>>,
+                      key
+                    );
+                    const domain = computeDomain(
+                      driverVisibleRows as Array<Record<string, unknown>>,
+                      [key],
+                      isBar
+                    );
+                    return (
+                      <Card key={key}>
+                        <CardHeader>
+                          <CardTitle>Driver Signal: {prettifyDriverLabel(key)}</CardTitle>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="text-xs text-slate-500 mb-3">
+                            Y-axis: {prettifyDriverLabel(key)} values.
+                          </p>
+                          <ChartWrap>
+                            {isBar ? (
+                              <BarChart data={driverVisibleRows}>
+                                <CartesianGrid strokeDasharray="2 4" stroke="#334155" />
+                                <XAxis
+                                  dataKey="ts"
+                                  type="number"
+                                  scale="time"
+                                  domain={["dataMin", "dataMax"]}
+                                  tickFormatter={(v) => formatShortDateFromTs(Number(v))}
+                                  minTickGap={28}
+                                  angle={-25}
+                                  textAnchor="end"
+                                  height={56}
+                                  tick={{ fontSize: 11 }}
+                                />
+                                <YAxis domain={domain} tickFormatter={formatAxisNumber} tick={{ fontSize: 11 }} />
+                                <Tooltip
+                                  labelFormatter={(label) => formatLongDateFromTs(Number(label))}
+                                  formatter={tooltipValue}
+                                />
+                                <Legend />
+                                <Bar
+                                  dataKey={key}
+                                  name={prettifyDriverLabel(key)}
+                                  fill="#22d3ee"
+                                  radius={[6, 6, 0, 0]}
+                                />
+                              </BarChart>
+                            ) : (
+                              <LineChart data={driverVisibleRows}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                <XAxis
+                                  dataKey="ts"
+                                  type="number"
+                                  scale="time"
+                                  domain={["dataMin", "dataMax"]}
+                                  tickFormatter={(v) => formatShortDateFromTs(Number(v))}
+                                  minTickGap={28}
+                                  angle={-25}
+                                  textAnchor="end"
+                                  height={56}
+                                  tick={{ fontSize: 11 }}
+                                />
+                                <YAxis
+                                  domain={domain}
+                                  tickFormatter={(v) => formatDecimal(Number(v), 2)}
+                                  tick={{ fontSize: 11 }}
+                                />
+                                <Tooltip
+                                  labelFormatter={(label) => formatLongDateFromTs(Number(label))}
+                                  formatter={tooltipValue}
+                                />
+                                <Legend />
+                                <Line
+                                  type="monotone"
+                                  dataKey={key}
+                                  name={prettifyDriverLabel(key)}
+                                  stroke="#22d3ee"
+                                  dot={false}
+                                />
+                              </LineChart>
+                            )}
+                          </ChartWrap>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
               )}
               <TimelineControls

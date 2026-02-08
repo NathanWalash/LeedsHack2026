@@ -663,6 +663,7 @@ async def get_analysis_sample():
     target_series_path = _resolve_analysis_path(outputs.get("target_series_csv", ""), "artifacts/target_series.csv")
     temp_weekly_path = _resolve_analysis_path(outputs.get("temp_weekly_csv", ""), "artifacts/temp_weekly.csv")
     holiday_weekly_path = _resolve_analysis_path(outputs.get("holiday_weekly_csv", ""), "artifacts/holiday_weekly.csv")
+    driver_series_path = _resolve_analysis_path(outputs.get("driver_series_csv", ""), "artifacts/driver_series.csv")
     plot_path = _resolve_analysis_path(outputs.get("plot", ""), "plots/model_fit.png")
 
     return {
@@ -676,6 +677,7 @@ async def get_analysis_sample():
             "target_series": target_series_path.exists(),
             "temp_weekly": temp_weekly_path.exists(),
             "holiday_weekly": holiday_weekly_path.exists(),
+            "driver_series": driver_series_path.exists(),
         },
         "datasets": {
             "forecast": _csv_records(forecast_path),
@@ -685,6 +687,7 @@ async def get_analysis_sample():
             "target_series": _csv_records(target_series_path),
             "temp_weekly": _csv_records(temp_weekly_path),
             "holiday_weekly": _csv_records(holiday_weekly_path),
+            "driver_series": _csv_records(driver_series_path),
         },
     }
 

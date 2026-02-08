@@ -396,6 +396,7 @@ def train_and_forecast(
     target_series_path = artifacts_dir / "target_series.csv"
     temp_weekly_path = artifacts_dir / "temp_weekly.csv"
     holiday_weekly_path = artifacts_dir / "holiday_weekly.csv"
+    driver_series_path = artifacts_dir / "driver_series.csv"
     analysis_path = run_dir / "analysis_result.json"
 
     forecast_df.to_csv(forecast_path, index=False)
@@ -426,6 +427,11 @@ def train_and_forecast(
             columns={date_col: "week_ending", "index": "week_ending"}
         ).to_csv(holiday_weekly_path, index=False)
 
+    if drivers_df is not None and not drivers_df.empty:
+        drivers_df.reset_index().rename(
+            columns={date_col: "week_ending", "index": "week_ending"}
+        ).to_csv(driver_series_path, index=False)
+
     metrics = {
         "baseline_rmse": eval_result["rmse_base"],
         "baseline_mae": eval_result["mae_base"],
@@ -447,12 +453,15 @@ def train_and_forecast(
         "target_series_csv": "artifacts/target_series.csv",
         "temp_weekly_csv": "artifacts/temp_weekly.csv",
         "holiday_weekly_csv": "artifacts/holiday_weekly.csv",
+        "driver_series_csv": "artifacts/driver_series.csv",
         "analysis_json": "analysis_result.json",
     }
 
     settings = {
         "baseline_model": baseline_model,
         "multivariate_model": multivariate_model,
+        "selected_drivers": selected_driver_cols,
+        "driver_columns_used": list(drivers_df.columns) if drivers_df is not None else [],
         "lags": lags,
         "test_window_weeks": test_window_weeks,
         "validation_mode": validation_mode,

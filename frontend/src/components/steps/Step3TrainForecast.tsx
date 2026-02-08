@@ -2,10 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useBuildStore } from "@/lib/store";
-import { trainModel } from "@/lib/api";
 import { BubbleSelect, Toggle, Button, Slider } from "@/components/ui";
 import { trainModel, sendChatMessage } from "@/lib/api";
-import { BubbleSelect, Toggle, Button } from "@/components/ui";
 import {
   Play,
   CheckCircle2,
@@ -479,7 +477,7 @@ export default function Step3TrainForecast() {
               askPredictPalForChoice({
                 key: "lag-config",
                 topic: "lag configuration",
-                options: LAG_CONFIG_OPTIONS.map((o) => ({ id: o.id, label: o.label })),
+                options: lagConfigOptions.map((o) => ({ id: o.id, label: o.label })),
                 currentValue: autoSelectLags ? "auto" : lagConfig,
                 applyRecommendation: (value) => {
                   if (value === "auto") {
