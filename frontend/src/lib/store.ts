@@ -29,6 +29,29 @@ export interface ChatMessage {
   content: string;
 }
 
+export interface ResultsTrendPoint {
+  month: string;
+  val: number;
+  note?: string;
+}
+
+export interface ResultsPageContextData {
+  metrics: {
+    accuracy: string;
+    error: string;
+  };
+  top_drivers: string[];
+  trend_summary: ResultsTrendPoint[];
+}
+
+export interface AnalysisSlideState {
+  id: string;
+  title: string;
+  phase: "evaluation" | "prediction";
+  index: number;
+  total: number;
+}
+
 export interface UserInfo {
   user_id: string;
   username: string;
@@ -173,6 +196,10 @@ interface BuildState {
   setWidgets: (widgets: { type: string; title: string; caption: string }[]) => void;
   addWidget: (w: { type: string; title: string; caption: string }) => void;
   removeWidget: (index: number) => void;
+  resultsPageContext: ResultsPageContextData | null;
+  setResultsPageContext: (ctx: ResultsPageContextData | null) => void;
+  analysisSlide: AnalysisSlideState | null;
+  setAnalysisSlide: (slide: AnalysisSlideState | null) => void;
 
   // Step 5: Showcase
   summary: string;
@@ -232,6 +259,8 @@ const buildInitial = {
   selectedDrivers: [] as string[],
   forecastResults: null as ForecastResults | null,
   widgets: [] as { type: string; title: string; caption: string }[],
+  resultsPageContext: null as ResultsPageContextData | null,
+  analysisSlide: null as AnalysisSlideState | null,
   summary: "",
   tags: [] as string[],
   isLoading: false,
@@ -370,6 +399,24 @@ export const useBuildStore = create<BuildState>()((set) => ({
   addWidget: (w) => set((s) => ({ widgets: [...s.widgets, w] })),
   removeWidget: (index) =>
     set((s) => ({ widgets: s.widgets.filter((_, i) => i !== index) })),
+  setResultsPageContext: (ctx) =>
+    set((s) => {
+      const prev = s.resultsPageContext;
+      const same =
+        JSON.stringify(prev) === JSON.stringify(ctx);
+      return same ? s : { resultsPageContext: ctx };
+    }),
+  setAnalysisSlide: (slide) =>
+    set((s) => {
+      const prev = s.analysisSlide;
+      const same =
+        prev?.id === slide?.id &&
+        prev?.title === slide?.title &&
+        prev?.phase === slide?.phase &&
+        prev?.index === slide?.index &&
+        prev?.total === slide?.total;
+      return same ? s : { analysisSlide: slide };
+    }),
 
   setSummary: (s) => set({ summary: s }),
   setTags: (t) => set({ tags: t }),

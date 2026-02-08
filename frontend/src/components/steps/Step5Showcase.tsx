@@ -5,9 +5,11 @@ import { useBuildStore, useAuthStore } from "@/lib/store";
 import {
   createProject,
   getSampleAnalysisBundle,
+  requestAISuggestion,
   type AnalysisBundle,
   updateProject,
 } from "@/lib/api";
+import { buildResultsPageContext, stringifyResultsPageContext } from "@/lib/resultsContext";
 import { Badge, Button, Input, Textarea } from "@/components/ui";
 import {
   ArrowDown,
@@ -200,6 +202,8 @@ export default function Step5Showcase() {
     baselineModel,
     multivariateModel,
     selectedDrivers,
+    resultsPageContext,
+    analysisSlide,
   } = useBuildStore();
   const user = useAuthStore((s) => s.user);
 
@@ -213,6 +217,8 @@ export default function Step5Showcase() {
   const [notice, setNotice] = useState("");
   const [publishError, setPublishError] = useState("");
   const [published, setPublished] = useState(false);
+  const [isSuggestingSetup, setIsSuggestingSetup] = useState(false);
+  const [captionBusyBlockId, setCaptionBusyBlockId] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -494,6 +500,14 @@ export default function Step5Showcase() {
     () => (analysis?.datasets.feature_importance || []).map((r) => ({ feature: r.feature, importance: Number(r.importance) })).sort((a, b) => b.importance - a.importance).slice(0, 10),
     [analysis]
   );
+  const computedResultsContext = useMemo(
+    () => resultsPageContext || buildResultsPageContext(analysis),
+    [resultsPageContext, analysis]
+  );
+  const resultsContextJson = useMemo(
+    () => stringifyResultsPageContext(computedResultsContext),
+    [computedResultsContext]
+  );
   const testWindowStartTs = testPred.length > 0 ? testPred[0].ts : null;
   const testWindowEndTs = testPred.length > 0 ? testPred[testPred.length - 1].ts : null;
   const forecastWindowStartTs = forecastData.length > 0 ? forecastData[0].ts : null;
@@ -584,22 +598,173 @@ export default function Step5Showcase() {
     });
   }, []);
 
-  const handleAISuggestSetup = () => {
-    setHeadline(projectTitle?.trim() ? `${projectTitle}: Forecast Highlights` : "Forecast Highlights");
-    setSummary(
-      `This post explains the ${horizon}-step forecast for ${projectTitle || "the selected dataset"}, compares ${multivariateModel || "multivariate"} against ${baselineModel || "baseline"}, and summarises practical insights.`
-    );
-    if (tags.length === 0) setTags(["business", "weekly"]);
-    setNotice("AI setup suggestion applied (stub).");
+  const aiPageContext = useMemo(
+    () =>
+      [
+        "Page: Publish Story (Step 5).",
+        projectTitle ? `Project title: ${projectTitle}.` : "",
+        `Forecast horizon: ${horizon} weeks.`,
+        `Baseline model: ${baselineModel || "not selected"}.`,
+        `Multivariate model: ${multivariateModel || "not selected"}.`,
+        selectedDrivers.length ? `Selected drivers: ${selectedDrivers.join(", ")}.` : "Selected drivers: none.",
+        analysisSlide
+          ? `Most recent analysis slide: ${analysisSlide.index}/${analysisSlide.total} ${analysisSlide.title} (${analysisSlide.phase}).`
+          : "",
+        resultsContextJson ? `Results page context JSON:\n${resultsContextJson}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    [
+      projectTitle,
+      horizon,
+      baselineModel,
+      multivariateModel,
+      selectedDrivers,
+      analysisSlide,
+      resultsContextJson,
+    ]
+  );
+
+  const aiReportData = useMemo(() => {
+    const payload = {
+      step: 5,
+      project: {
+        title: projectTitle,
+        description: projectDescription,
+        use_case: useCase,
+      },
+      training_context: {
+        horizon_weeks: horizon,
+        baseline_model: baselineModel,
+        multivariate_model: multivariateModel,
+        selected_drivers: selectedDrivers,
+      },
+      story_context: {
+        headline,
+        summary,
+        tags,
+        block_count: blocks.length,
+      },
+      results_page_context: computedResultsContext,
+    };
+    try {
+      return JSON.stringify(payload);
+    } catch {
+      return null;
+    }
+  }, [
+    projectTitle,
+    projectDescription,
+    useCase,
+    horizon,
+    baselineModel,
+    multivariateModel,
+    selectedDrivers,
+    headline,
+    summary,
+    tags,
+    blocks.length,
+    computedResultsContext,
+  ]);
+
+  const graphSourceSummary = (assetId: GraphAssetId): string => {
+    if (assetId === "future-forecast") {
+      if (forecastData.length < 2) return "Future forecast timeline.";
+      const first = forecastData[0].multivariate_forecast;
+      const last = forecastData[forecastData.length - 1].multivariate_forecast;
+      return `Future forecast from ${Math.round(first)} to ${Math.round(last)} over ${forecastData.length} points.`;
+    }
+    if (assetId === "test-fit") {
+      const rmse = analysis?.manifest?.metrics?.multivariate_rmse;
+      return Number.isFinite(Number(rmse))
+        ? `Test-window fit chart. Multivariate RMSE is ${Math.round(Number(rmse))}.`
+        : "Test-window fit chart comparing actual and predictions.";
+    }
+    if (assetId === "error-trend") {
+      if (errorData.length === 0) return "Error trend chart over the test window.";
+      const avgErr =
+        errorData.reduce((sum, row) => sum + row.multivariate_error, 0) /
+        errorData.length;
+      return `Error trend chart with average multivariate absolute error around ${Math.round(avgErr)}.`;
+    }
+    if (assetId === "driver-series") {
+      if (driverData.length === 0) return "Driver series chart (temperature and holiday count).";
+      const maxHoliday = Math.max(...driverData.map((row) => row.holiday_count));
+      return `Driver signals chart combining temperature and holiday count (max holidays per point: ${maxHoliday}).`;
+    }
+    if (importanceData.length === 0) return "Feature importance ranking chart.";
+    return `Feature importance chart led by ${importanceData[0].feature}.`;
+  };
+
+  const handleAISuggestSetup = async () => {
+    if (isSuggestingSetup) return;
+    setIsSuggestingSetup(true);
+    setNotice("");
+
+    try {
+      const suggestion = await requestAISuggestion({
+        mode: "story_setup",
+        project_id: projectId,
+        page_context: aiPageContext,
+        report_data: aiReportData,
+        current_headline: headline,
+        current_summary: summary,
+      });
+      if (suggestion.headline?.trim()) setHeadline(suggestion.headline.trim());
+      if (suggestion.summary?.trim()) setSummary(suggestion.summary.trim());
+      if (tags.length === 0) setTags(["business", "weekly"]);
+      setNotice("AI setup suggestion applied.");
+    } catch {
+      setNotice("AI setup suggestion failed. Please retry.");
+    } finally {
+      setIsSuggestingSetup(false);
+    }
   };
 
   const handleAISuggestText = (blockId: string) => {
     updateBlock(blockId, (b) => (b.type === "text" ? { ...b, content: b.style === "bullets" ? "Forecast horizon is clear\nModel comparison is positive\nPlan next actions" : "This section explains what the chart means in plain English." } : b));
     setNotice("AI text suggestion applied (stub).");
   };
-  const handleAICaption = (blockId: string) => {
-    updateBlock(blockId, (b) => (b.type === "graph" ? { ...b, caption: "This chart summarises the key pattern for quick decision-making." } : b));
-    setNotice("AI caption suggestion applied (stub).");
+  const handleAICaption = async (blockId: string) => {
+    const block = blocks.find((b) => b.id === blockId);
+    if (!block || block.type !== "graph") return;
+    if (captionBusyBlockId) return;
+
+    setCaptionBusyBlockId(blockId);
+    setNotice("");
+    try {
+      const suggestion = await requestAISuggestion({
+        mode: "graph_caption",
+        project_id: projectId,
+        page_context: aiPageContext,
+        report_data: JSON.stringify({
+          story_context: {
+            headline,
+            summary,
+            tags,
+          },
+          selected_graph: {
+            source: block.assetId,
+            title: block.title,
+            current_caption: block.caption,
+            source_summary: graphSourceSummary(block.assetId),
+          },
+          results_page_context: computedResultsContext,
+        }),
+        graph_source: block.assetId,
+        current_caption: block.caption,
+      });
+      if (suggestion.caption?.trim()) {
+        updateBlock(blockId, (b) =>
+          b.type === "graph" ? { ...b, caption: suggestion.caption!.trim() } : b
+        );
+      }
+      setNotice(`AI caption suggestion applied for ${block.assetId}.`);
+    } catch {
+      setNotice("AI caption suggestion failed. Please retry.");
+    } finally {
+      setCaptionBusyBlockId(null);
+    }
   };
 
   const renderTextPreview = (b: TextBlock) => {
@@ -913,7 +1078,10 @@ export default function Step5Showcase() {
         <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-5">
           <div className="flex items-center justify-between">
             <h4 className="text-white font-semibold text-base">Step 1: Create Your Story</h4>
-            <Button size="sm" variant="secondary" onClick={handleAISuggestSetup}><Sparkles className="w-3.5 h-3.5 mr-1" />AI Suggestion</Button>
+            <Button size="sm" variant="secondary" onClick={handleAISuggestSetup} disabled={isSuggestingSetup}>
+              {isSuggestingSetup ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
+              AI Suggestion
+            </Button>
           </div>
           <Input label="Headline" value={headline} onChange={(e) => setHeadline(e.target.value)} />
           <Textarea label="Short Description" value={summary} onChange={(e) => setSummary(e.target.value)} rows={4} />
@@ -1039,7 +1207,10 @@ export default function Step5Showcase() {
                       updateBlock(b.id, (x) => (x.type === "graph" ? { ...x, caption: next } : x))
                     }
                   />
-                  <Button size="sm" variant="secondary" onClick={() => handleAICaption(b.id)}><Sparkles className="w-3.5 h-3.5 mr-1" />AI Suggest Caption</Button>
+                  <Button size="sm" variant="secondary" onClick={() => handleAICaption(b.id)} disabled={captionBusyBlockId !== null}>
+                    {captionBusyBlockId === b.id ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
+                    AI Suggest Caption
+                  </Button>
                   {renderWindowControls(b)}
                   {renderGraph(b)}
                 </div>
