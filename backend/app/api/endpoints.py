@@ -8,6 +8,7 @@ import uuid
 import hashlib
 import tempfile
 import json
+import re
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
@@ -234,6 +235,17 @@ class ChatRequest(BaseModel):
     page_context: str = ""
     history: list[dict] = []
     report_data: str | None = None
+
+
+class AISuggestRequest(BaseModel):
+    mode: str
+    project_id: str | None = None
+    page_context: str = ""
+    report_data: str | None = None
+    graph_source: str | None = None
+    current_headline: str | None = None
+    current_summary: str | None = None
+    current_caption: str | None = None
 
 
 # ─── Upload ────────────────────────────────────────────────────────────────────
@@ -794,6 +806,100 @@ async def chat(req: ChatRequest):
         report_data=req.report_data,
         history=req.history,
     )
+
+
+def _extract_first_json_object(text: str) -> dict[str, Any] | None:
+    if not text:
+        return None
+
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+
+    match = re.search(r"\{[\s\S]*\}", text)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group(0))
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        return None
+    return None
+
+
+def _fallback_story_setup(req: AISuggestRequest) -> dict[str, str]:
+    headline = (req.current_headline or "").strip() or "Forecast Highlights"
+    summary = (req.current_summary or "").strip() or (
+        "This story summarises model performance, key drivers, and the forecast trend "
+        "so decision-makers can act with confidence."
+    )
+    return {"headline": headline, "summary": summary}
+
+
+def _fallback_graph_caption(req: AISuggestRequest) -> dict[str, str]:
+    source = (req.graph_source or "graph").replace("-", " ")
+    return {
+        "caption": (
+            f"This {source} chart highlights the main movement in the selected window "
+            "and the key takeaway for planning."
+        )
+    }
+
+
+@router.post("/ai/suggest")
+async def ai_suggest(req: AISuggestRequest):
+    """
+    Structured AI suggestions for Step 5 controls.
+    This endpoint is independent of chat history.
+    """
+    mode = (req.mode or "").strip().lower()
+    if mode not in {"story_setup", "graph_caption"}:
+        raise HTTPException(status_code=400, detail="mode must be 'story_setup' or 'graph_caption'")
+
+    if mode == "story_setup":
+        message = (
+            "You are helping with a forecasting story setup.\n"
+            "Return strict JSON only with keys: headline, summary.\n"
+            "Requirements:\n"
+            "- Any forecast horizon value in context is in weeks.\n"
+            "- Never convert or relabel the horizon as months.\n"
+            "- headline: short, specific, publication-ready title.\n"
+            "- summary: 2-3 sentences grounded in provided context.\n"
+            "- do not include markdown or extra keys.\n"
+        )
+        expected = ("headline", "summary")
+    else:
+        source = (req.graph_source or "graph").strip()
+        message = (
+            "You are helping with a graph caption.\n"
+            f"Graph source: {source}\n"
+            "Return strict JSON only with key: caption.\n"
+            "Requirements:\n"
+            "- caption must be specific to this graph source.\n"
+            "- caption should mention the trend/pattern visible in the data context.\n"
+            "- keep it concise and publication-ready.\n"
+            "- do not include markdown or extra keys.\n"
+        )
+        expected = ("caption",)
+
+    ai = await generate_chat_response(
+        message=message,
+        page_context=req.page_context,
+        report_data=req.report_data,
+        history=[],
+    )
+    parsed = _extract_first_json_object(ai.get("content", ""))
+
+    if isinstance(parsed, dict) and all(isinstance(parsed.get(key), str) for key in expected):
+        return {key: parsed[key].strip() for key in expected}
+
+    if mode == "story_setup":
+        return _fallback_story_setup(req)
+    return _fallback_graph_caption(req)
 
 
 # ─── Auth ──────────────────────────────────────────────────────────────────────

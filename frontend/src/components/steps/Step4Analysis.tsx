@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useBuildStore } from "@/lib/store";
 import { Button, Badge, Card, CardHeader, CardTitle, CardContent } from "@/components/ui";
 import { getSampleAnalysisBundle, type AnalysisBundle } from "@/lib/api";
+import { buildResultsPageContext } from "@/lib/resultsContext";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -64,6 +65,45 @@ const SECTION_OPTIONS: SectionOption[] = [
     label: "Driver Signals",
     description: "Temperature and holiday pattern",
     group: "advanced",
+  },
+];
+
+const SLIDE_FLOW: SlideSpec[] = [
+  {
+    id: "summary-metrics",
+    phase: "evaluation",
+    title: "Run Summary and Model Metrics",
+    description: "Key run context and RMSE performance in one view.",
+  },
+  {
+    id: "test-fit",
+    phase: "evaluation",
+    title: "Test Window Fit",
+    description: "Actual values versus predictions in the test period.",
+  },
+  {
+    id: "error-trend",
+    phase: "evaluation",
+    title: "Absolute Error Trend",
+    description: "How prediction error changes over time.",
+  },
+  {
+    id: "feature-importance",
+    phase: "evaluation",
+    title: "Feature Importance",
+    description: "Which input features mattered most.",
+  },
+  {
+    id: "future-forecast",
+    phase: "prediction",
+    title: "Future Forecast",
+    description: "Historical data followed by forecast lines.",
+  },
+  {
+    id: "driver-series",
+    phase: "prediction",
+    title: "Driver Signals",
+    description: "Temperature and holiday patterns together.",
   },
 ];
 
@@ -195,7 +235,11 @@ function filterRowsByRange<T extends { ts: number }>(
 }
 
 export default function Step4Analysis() {
-  const { completeStep, nextStep, prevStep, setWidgets } = useBuildStore();
+  const completeStep = useBuildStore((s) => s.completeStep);
+  const nextStep = useBuildStore((s) => s.nextStep);
+  const prevStep = useBuildStore((s) => s.prevStep);
+  const setWidgets = useBuildStore((s) => s.setWidgets);
+  const setResultsPageContext = useBuildStore((s) => s.setResultsPageContext);
 
   const [analysis, setAnalysis] = useState<AnalysisBundle | null>(null);
   const [loading, setLoading] = useState(true);
@@ -523,39 +567,7 @@ export default function Step4Analysis() {
   const multivariateRmse = Number(metrics?.multivariate_rmse);
   const improvementPct = Number(metrics?.improvement_pct);
   const targetLabel = analysis?.manifest.data_summary.target_name || "Target";
-  const slideFlow: SlideSpec[] = [
-    {
-      id: "summary-metrics",
-      phase: "evaluation",
-      title: "Run Summary and Model Metrics",
-      description: "Key run context and RMSE performance in one view.",
-    },
-    {
-      id: "test-fit",
-      phase: "evaluation",
-      title: "Test Window Fit",
-      description: "Actual values versus predictions in the test period.",
-    },
-    {
-      id: "error-trend",
-      phase: "evaluation",
-      title: "Absolute Error Trend",
-      description: "How prediction error changes over time.",
-    },
-    {
-      id: "feature-importance",
-      phase: "evaluation",
-      title: "Feature Importance",
-      description: "Which input features mattered most.",
-    },
-    {
-      id: "future-forecast",
-      phase: "prediction",
-      title: "Future Forecast",
-      description: "Historical data followed by forecast lines.",
-    },
-    { id: "driver-series", phase: "prediction", title: "Driver Signals", description: "Temperature and holiday patterns together." },
-  ];
+  const slideFlow = SLIDE_FLOW;
   const currentSlide = slideFlow[currentSlideIndex] || null;
   const currentSlideId = currentSlide?.id ?? null;
   const showEvaluation = currentSlide ? currentSlide.phase === "evaluation" : false;
@@ -568,6 +580,11 @@ export default function Step4Analysis() {
   const overallProgressPct = slideFlow.length === 0 ? 0 : Math.round(((currentSlideIndex + 1) / slideFlow.length) * 100);
   const atFirstSlide = currentSlideIndex <= 0;
   const atLastSlide = slideFlow.length === 0 || currentSlideIndex >= slideFlow.length - 1;
+  const resultsPageContext = useMemo(() => buildResultsPageContext(analysis), [analysis]);
+
+  useEffect(() => {
+    setResultsPageContext(resultsPageContext);
+  }, [resultsPageContext, setResultsPageContext]);
 
   return (
     <div className="space-y-8">

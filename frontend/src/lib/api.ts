@@ -169,6 +169,28 @@ export async function sendChatMessage(payload: ChatPayload) {
   return res.data;
 }
 
+export interface AISuggestionPayload {
+  mode: "story_setup" | "graph_caption";
+  project_id?: string | null;
+  page_context?: string;
+  report_data?: string | null;
+  graph_source?: string;
+  current_headline?: string;
+  current_summary?: string;
+  current_caption?: string;
+}
+
+export interface AISuggestionResponse {
+  headline?: string;
+  summary?: string;
+  caption?: string;
+}
+
+export async function requestAISuggestion(payload: AISuggestionPayload): Promise<AISuggestionResponse> {
+  const res = await api.post("/ai/suggest", payload);
+  return res.data as AISuggestionResponse;
+}
+
 export interface AnalysisManifest {
   data_summary: {
     target_name: string;

@@ -7,6 +7,7 @@ import { sendChatMessage } from "@/lib/api";
 import { Button } from "@/components/ui";
 import { Send } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { stringifyResultsPageContext } from "@/lib/resultsContext";
 
 const USE_CASE_LABELS: Record<string, string> = {
   retail: "Retail & Sales",
@@ -90,11 +91,14 @@ function usePageContext(): string {
   const driverFiles = useBuildStore((s) => s.driverFiles);
   const driverNumericColumns = useBuildStore((s) => s.driverNumericColumns);
   const widgets = useBuildStore((s) => s.widgets);
+  const resultsPageContext = useBuildStore((s) => s.resultsPageContext);
+  const analysisSlide = useBuildStore((s) => s.analysisSlide);
   const summary = useBuildStore((s) => s.summary);
   const tags = useBuildStore((s) => s.tags);
   const forecastResults = useBuildStore((s) => s.forecastResults);
   const modelMetrics = forecastResults?.metrics || {};
   const rmseImprovement = modelMetrics.improvement_pct;
+  const resultsJson = stringifyResultsPageContext(resultsPageContext);
 
   switch (currentStep) {
     case 1:
@@ -188,14 +192,17 @@ function usePageContext(): string {
     case 4:
       return [
         "Page: Analysis & Results (Step 4).",
-        "The user is reviewing a guided analysis flow with model quality first, then future forecast outputs.",
-        "Step 4 includes fixed sections: Run Summary, Model Metrics, Test Fit, Future Forecast, Feature Importance, Error Trend, Driver Signals, and Forecast Table.",
+        "The user is reviewing a slideshow analysis flow with model quality first, then future forecast outputs.",
+        analysisSlide
+          ? `Current slide ${analysisSlide.index}/${analysisSlide.total}: ${analysisSlide.title} (${analysisSlide.phase}).`
+          : "Slide state is not available yet.",
         widgets.length
           ? `Widgets prepared for Step 5: ${widgets.map((w) => w.type).join(", ")}.`
           : "",
         forecastResults
           ? `Forecast results are available from Step 3 with horizon ${forecastResults.horizon} and drivers ${forecastResults.drivers_used?.join(", ") || "none"}.`
           : "No forecast results yet.",
+        resultsJson ? `Results page context JSON:\n${resultsJson}` : "Results page context JSON not generated yet.",
         "Help interpret model metrics, test-fit behavior, forecast trends, and driver importance in plain language.",
       ]
         .filter(Boolean)
@@ -208,6 +215,7 @@ function usePageContext(): string {
         summary ? `Story description/summary: ${summary}.` : "Story description has not been written yet.",
         tags.length ? `Selected categories/tags: ${tags.join(", ")}.` : "No categories selected yet.",
         widgets.length ? `Available analysis sections from Step 4: ${widgets.map((w) => w.title).join(", ")}.` : "",
+        resultsJson ? `Step 4 results JSON available for story writing:\n${resultsJson}` : "",
         "Step 5 flow has three stages: Start Prompt, Notebook Builder, Preview & Publish.",
         "Help the user write clearer narrative text, choose useful sections, and prepare an accurate publish-ready summary.",
       ].join(" ");
@@ -229,6 +237,8 @@ function useReportData(): string | null {
   const lagConfig = useBuildStore((s) => s.lagConfig);
   const testWindowWeeks = useBuildStore((s) => s.testWindowWeeks);
   const validationMode = useBuildStore((s) => s.validationMode);
+  const resultsPageContext = useBuildStore((s) => s.resultsPageContext);
+  const analysisSlide = useBuildStore((s) => s.analysisSlide);
 
   const hasContextPayload =
     !!forecastResults || widgets.length > 0 || !!summary || tags.length > 0;
@@ -251,6 +261,8 @@ function useReportData(): string | null {
       test_window_weeks: testWindowWeeks,
       validation_mode: validationMode,
     },
+    results_page_context: resultsPageContext,
+    analysis_slide: analysisSlide,
   };
 
   try {
