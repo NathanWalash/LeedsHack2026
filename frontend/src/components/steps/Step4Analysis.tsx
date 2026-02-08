@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useBuildStore } from "@/lib/store";
 import { Button, Badge, Card, CardHeader, CardTitle, CardContent } from "@/components/ui";
 import { getSampleAnalysisBundle, type AnalysisBundle } from "@/lib/api";
-import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -521,6 +521,8 @@ export default function Step4Analysis() {
   const metrics = analysis?.manifest?.metrics;
   const baselineRmse = Number(metrics?.baseline_rmse);
   const multivariateRmse = Number(metrics?.multivariate_rmse);
+  const baselineNrmsePct = Number(metrics?.baseline_nrmse_pct);
+  const multivariateNrmsePct = Number(metrics?.multivariate_nrmse_pct);
   const improvementPct = Number(metrics?.improvement_pct);
   const targetLabel = analysis?.manifest.data_summary.target_name || "Target";
   const slideFlow: SlideSpec[] = [
@@ -690,6 +692,25 @@ export default function Step4Analysis() {
                   value={Number.isFinite(multivariateRmse) ? fmt.format(multivariateRmse) : "N/A"}
                   tone="success"
                   explanation="Same metric for the multivariate model. Lower than baseline means better accuracy."
+                />
+                <KpiCard
+                  title="Multivariate NRMSE"
+                  value={Number.isFinite(multivariateNrmsePct) ? `${pct.format(multivariateNrmsePct)}%` : "N/A"}
+                  tone={
+                    Number.isFinite(baselineNrmsePct) && Number.isFinite(multivariateNrmsePct)
+                      ? nrmseImproved
+                        ? "success"
+                        : "danger"
+                      : "neutral"
+                  }
+                  status={
+                    Number.isFinite(baselineNrmsePct) && Number.isFinite(multivariateNrmsePct)
+                      ? nrmseImproved
+                        ? "improved"
+                        : "worse"
+                      : "reference"
+                  }
+                  explanation="Normalized RMSE as percent of average actual value. Lower is better."
                 />
                 <KpiCard
                   title="Improvement"
@@ -870,7 +891,7 @@ export default function Step4Analysis() {
                   This view joins history and forecast in one timeline, so you can clearly see where prediction starts and how each model continues.
                 </p>
                 <p className="text-xs text-slate-500 mb-1">
-                  X-axis: full timeline, including historical data and future forecast weeks.
+                  X-axis: full timeline, including historical data and future forecast periods.
                 </p>
                 <p className="text-xs text-slate-500 mb-3">
                   Y-axis: {targetLabel} values. Actual history is shown first, then forecast lines continue.
@@ -1229,11 +1250,13 @@ function KpiCard({
   title,
   value,
   tone,
+  status,
   explanation,
 }: {
   title: string;
   value: string;
-  tone: "neutral" | "success";
+  tone: "neutral" | "success" | "danger";
+  status?: "reference" | "improved" | "worse";
   explanation?: string;
 }) {
   return (
@@ -1241,16 +1264,23 @@ function KpiCard({
       className={`rounded-2xl border p-4 ${
         tone === "success"
           ? "border-emerald-800 bg-emerald-900/20"
+          : tone === "danger"
+            ? "border-red-800 bg-red-900/20"
           : "border-slate-800 bg-slate-900/60"
       }`}
     >
       <p className="text-xs uppercase tracking-wide text-slate-400">{title}</p>
       <p className="text-2xl font-semibold text-white mt-1">{value}</p>
       <div className="mt-2 text-xs">
-        {tone === "success" ? (
+        {status === "improved" ? (
           <span className="inline-flex items-center gap-1 text-emerald-400">
             <CheckCircle2 className="w-3.5 h-3.5" />
             Improved over baseline
+          </span>
+        ) : status === "worse" ? (
+          <span className="inline-flex items-center gap-1 text-red-400">
+            <XCircle className="w-3.5 h-3.5" />
+            Worse than baseline
           </span>
         ) : (
           <span className="text-slate-500">Reference metric</span>
