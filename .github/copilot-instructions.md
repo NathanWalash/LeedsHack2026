@@ -8,91 +8,162 @@ PredictPal is a monorepo with:
 
 Frontend talks to backend through `NEXT_PUBLIC_API_URL` (default `http://localhost:8000/api`).
 
-## Current Architecture
+## Architecture
 
 ### Backend
 - Entry point: `backend/app/main.py`
 - Router: `backend/app/api/endpoints.py` mounted at `/api`
 - CORS allows `http://localhost:3000`
-- Runtime state is in-memory dicts (`_projects`, `_users`, `_dataframes`, etc.) and resets on backend restart
-- Forecast/training pipeline is in `backend/app/core/training.py` and related modules (`features.py`, `evaluation.py`, `grid_search.py`, `models.py`)
-- Preprocessing pipeline is in `backend/app/core/preprocessing.py`
-- Data loading and detection logic is in `backend/app/core/processing.py`
+- Runtime state is in-memory dictionaries and resets when backend restarts
+- Core modules:
+  - Data loading/detection: `backend/app/core/processing.py`
+  - Preprocessing: `backend/app/core/preprocessing.py`
+  - Training pipeline: `backend/app/core/training.py` + related modules
+  - Chat provider integration: `backend/app/core/gemini.py`
 
 ### Frontend
-- App Router pages are under `frontend/src/app/`
-- Main build wizard route is `/create` (not `/build`)
-- Wizard step components are in `frontend/src/components/steps/`:
+- App Router pages under `frontend/src/app/`
+- Main wizard route: `/create`
+- Step components in `frontend/src/components/steps/`:
   - `Step1GetStarted.tsx`
   - `Step2ProcessData.tsx`
   - `Step3TrainForecast.tsx`
   - `Step4Analysis.tsx`
   - `Step5Showcase.tsx`
-- Shared state uses Zustand in `frontend/src/lib/store.ts`:
-  - `useAuthStore` is persisted to localStorage
-  - `useBuildStore` is in-memory per tab session
-- API wrappers are in `frontend/src/lib/api.ts`
+- Chat UI: `frontend/src/components/ChatSidebar.tsx`
+- Global state (Zustand): `frontend/src/lib/store.ts`
+- API client: `frontend/src/lib/api.ts`
 
-## API Surface (Current)
+## API Surface
 
-Primary backend routes used by frontend:
-- Auth:
+Current routes used by frontend:
+- Auth
   - `POST /api/auth/register`
   - `POST /api/auth/login`
-- Projects:
+- Projects/Stories
   - `POST /api/projects/create`
   - `GET /api/projects/{user_id}`
   - `GET /api/projects/detail/{project_id}`
   - `POST /api/projects/update`
-- Data pipeline:
+  - `GET /api/stories`
+  - `GET /api/stories/{story_id}`
+- Data/Forecast
   - `POST /api/upload`
   - `POST /api/upload-drivers`
   - `POST /api/analyze`
   - `POST /api/process`
   - `POST /api/train`
   - `GET /api/analysis/sample`
-- Chat:
+- Chat
   - `POST /api/chat`
-- Explore/stories:
-  - `GET /api/stories`
-  - `GET /api/stories/{story_id}`
 
-## Data and Forecast Flow
+## Wizard Flow
 
-1. Step 1 uploads target file via `/upload`, optional driver file via `/upload-drivers`.
-2. Step 2 calls `/process` to clean/normalize target data and optional drivers.
-3. Step 3 calls `/train` for baseline + multivariate forecasting.
-4. Step 4 currently renders from `/analysis/sample` (precomputed bundle from `backend/app/outputs`), not from per-project training output.
-5. Step 5 builds a notebook-style story and publishes by calling `/projects/update` with `config.published = true`.
+1. Step 1 uploads target data (`/upload`) and optional driver data (`/upload-drivers`).
+2. Step 2 processes/cleans data (`/process`).
+3. Step 3 trains baseline + multivariate models (`/train`).
+4. Step 4 displays analysis from sample bundle (`/analysis/sample`), not strictly per-project output.
+5. Step 5 builds and publishes story cards via `/projects/update` (`config.published = true`).
 
-## Chat Behavior
+## Chat System (Detailed)
 
-- Backend chat is implemented in `backend/app/core/gemini.py`.
-- If `GEMINI_API_KEY` is set, `/chat` uses Google Gemini (`google-genai`) with retry/error handling.
-- If no key exists, it falls back to keyword-based stub replies.
-- Frontend chat context is assembled from current wizard state in `frontend/src/components/ChatSidebar.tsx`.
+### End-to-end flow
+1. UI calls `sendChatMessage(...)` in `frontend/src/lib/api.ts`.
+2. Request is posted to `POST /api/chat` in `backend/app/api/endpoints.py`.
+3. Endpoint delegates to `generate_chat_response(...)` in `backend/app/core/gemini.py`.
+4. Response is returned as `{ role: "assistant", content: string }`.
 
-## Story/Explore Behavior
+### Frontend message payload
+Chat requests can include:
+- `message`: user text
+- `history`: recent chat turns (frontend sends store history; backend also trims)
+- `page_context`: current UI state summary
+- `report_data`: extra structured context (results/training/story context)
+- `project_id`
 
-- Live stories come from backend published projects (`/stories`).
-- Explore page also merges static debug stories from `frontend/src/lib/debugStories.ts`.
-- Story detail page loads either backend story or debug story, then renders notebook blocks via `frontend/src/components/story/StoryNotebook.tsx`.
+### Context assembly in frontend
+`ChatSidebar.tsx` builds context from Zustand in:
+- `usePageContext()`
+- `useReportData()`
 
-## UI and Styling Conventions
+`usePageContext()` is step-aware and should be kept aligned with current UI options.
+It includes selected values for Step 1-5 and explicit option vocab for Step 2/3.
 
-- Reusable UI primitives are in `frontend/src/components/ui/index.tsx`.
-- `BubbleSelect` is the default selector pattern in the wizard.
-- Theme is dark slate/teal across pages.
-- Icons use `lucide-react`.
-- Utility for class merging is `cn()` from `frontend/src/lib/utils.ts`.
+`useReportData()` currently packages:
+- `forecast_results`
+- `story_context`
+- `training_context`
+
+### Backend prompt construction
+`backend/app/core/gemini.py`:
+- Uses `SYSTEM_PROMPT`
+- Appends `PAGE CONTEXT`
+- Appends truncated `DATA CONTEXT` (`report_data` max ~8000 chars)
+- Appends last 10 conversation turns
+- Appends current user message
+
+### Provider and fallback behavior
+- If `GEMINI_API_KEY` is missing: keyword fallback bot
+- If key exists: Gemini via `google-genai`
+- Overload handling:
+  - retries once on transient overload (`503/unavailable/overloaded`)
+  - then returns friendly overload message
+- Handles rate limit (`429`) and safety blocks with friendly replies
+
+### In-step "Ask Predict Pal" helpers (Step 2/3)
+Step 2 and Step 3 include helper buttons beside major option groups:
+- They send a hidden internal prompt to chat asking for:
+  - concise explanation
+  - strict trailing line `RECOMMENDATION: <id>`
+- UI only shows a clean user message (not internal prompt details)
+- Assistant output shown to user strips trailing recommendation line
+- If recommendation id is valid for that option group, UI auto-selects it
+
+This behavior is implemented in:
+- `frontend/src/components/steps/Step2ProcessData.tsx`
+- `frontend/src/components/steps/Step3TrainForecast.tsx`
+
+### Chat UI behavior
+- Sidebar is in `/create` layout (`frontend/src/app/create/page.tsx`)
+- Width is resizable with drag handle
+- Width persistence key: `predict-pal-chat-width`
+- Sidebar is sticky, viewport-constrained, and internally scrollable
+- Message markdown supports lightweight formatting (bold/lists/newlines)
+
+## Extending Chat Features
+
+When adding new chat features, keep this order:
+1. Update step UI options (if changed).
+2. Update `usePageContext()` to match exact option labels/ids and selected values.
+3. Update helper prompt option lists (if relevant).
+4. Update backend `SYSTEM_PROMPT` constraints only if behavior policy changes.
+5. Validate no user-visible leakage of internal recommendation protocol.
+
+For new structured actions, prefer:
+- strict machine-readable suffixes or lightweight JSON blocks
+- local parsing and validation against known option IDs
+- no silent auto-apply if parsed value is not in allowed options
+
+## Story/Explore Notes
+
+- Published stories are derived from backend in-memory projects.
+- Explore may include debug/static data depending on frontend wiring.
+- Because backend state is in-memory, published items disappear on backend restart unless persisted externally.
+
+## UI Conventions
+
+- Shared primitives: `frontend/src/components/ui/index.tsx`
+- Use `BubbleSelect` for wizard option selection
+- Icons: `lucide-react`
+- Utility: `cn()` from `frontend/src/lib/utils.ts`
+- Dark slate/teal theme is the default style language
 
 ## Important Gotchas
 
-- Backend storage is volatile in-memory; restarting server drops users/projects/uploads.
-- Step 4 and story charts rely on sample analysis artifacts, so they can be decoupled from the exact project just trained.
-- Some Step components still destructure the full Zustand store; prefer selector-based access in new performance-sensitive components.
-- `.env` may include `OPENAI_API_KEY`, but chat path is Gemini-based in current implementation.
-- `class-variance-authority` exists in dependencies but UI primitives are handwritten in `ui/index.tsx`.
+- Backend data is ephemeral (in-memory only).
+- Step 4 analysis currently reads sample artifacts, not guaranteed project-specific outputs.
+- `.env` may contain other model keys, but chat path is Gemini-based.
+- Keep frontend context text aligned with current product naming (`PredictPal`).
 
 ## Dependency Constraints
 
@@ -103,7 +174,7 @@ Backend pins include:
 - `skforecast==0.11.0`
 - `google-genai>=1.0.0`
 
-Frontend core versions:
+Frontend core:
 - `next@16.1.6`
 - `react@19.2.3`
 - `tailwindcss@4`
