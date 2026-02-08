@@ -534,20 +534,45 @@ export default function Step3TrainForecast() {
               </span>
             </p>
             {driverNumericColumns.length > 0 ? (
-              <BubbleSelect
-                label="Select driver columns"
-                options={driverNumericColumns.map((c) => ({
-                  id: c,
-                  label: c,
-                  icon: <BarChart3 className="w-4 h-4" />,
-                }))}
-                selected={selectedDrivers}
-                onSelect={toggleDriver}
-                multi
-                layout="grid"
-                columns={2}
-                fullWidth
-              />
+              <div className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Uploaded driver columns
+                </p>
+                <div className="space-y-2">
+                  {driverNumericColumns.map((column) => {
+                    const active = selectedDrivers.includes(column);
+                    return (
+                      <button
+                        key={column}
+                        type="button"
+                        onClick={() => toggleDriver(column)}
+                        className={`w-full rounded-xl border px-4 py-3 text-left transition cursor-pointer ${
+                          active
+                            ? "border-teal-500 bg-teal-500/10"
+                            : "border-slate-700 bg-slate-800/40 hover:border-slate-600"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="inline-flex items-center gap-2 text-sm font-medium text-slate-200">
+                            <BarChart3 className="w-4 h-4 text-teal-300" />
+                            {column}
+                          </span>
+                          <span
+                            className={`text-xs font-semibold ${
+                              active ? "text-teal-300" : "text-slate-400"
+                            }`}
+                          >
+                            {active ? "Selected" : "Click to add"}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                          From uploaded driver file data.
+                        </p>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             ) : (
               <p className="text-sm text-slate-400">
                 No numeric drivers available after processing.
@@ -560,17 +585,30 @@ export default function Step3TrainForecast() {
           </p>
         )}
 
-        <div className="flex flex-wrap gap-6">
-          <Toggle
-            checked={calendarFeatures}
-            onChange={setCalendarFeatures}
-            label="Calendar features"
-          />
-          <Toggle
-            checked={holidayFeatures}
-            onChange={setHolidayFeatures}
-            label="Holiday features"
-          />
+        <div className="space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Built-in driver signals
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="rounded-xl border border-slate-700 bg-slate-800/40 px-4 py-3">
+              <p className="text-sm font-medium text-slate-200">Calendar pattern features</p>
+              <p className="text-xs text-slate-500 mt-1">
+                Adds date-derived timing patterns (for example week/month structure).
+              </p>
+              <div className="mt-3">
+                <Toggle checked={calendarFeatures} onChange={setCalendarFeatures} label="Include" />
+              </div>
+            </div>
+            <div className="rounded-xl border border-slate-700 bg-slate-800/40 px-4 py-3">
+              <p className="text-sm font-medium text-slate-200">Holiday count signal</p>
+              <p className="text-xs text-slate-500 mt-1">
+                Adds holiday-activity counts as an extra external driver.
+              </p>
+              <div className="mt-3">
+                <Toggle checked={holidayFeatures} onChange={setHolidayFeatures} label="Include" />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
