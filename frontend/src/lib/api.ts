@@ -228,6 +228,7 @@ export interface AnalysisBundle {
       date?: string;
       holiday_count: number;
     }>;
+    driver_series: Array<Record<string, string | number | null>>;
   };
 }
 

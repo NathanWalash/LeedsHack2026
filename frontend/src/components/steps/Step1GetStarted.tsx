@@ -403,12 +403,17 @@ export default function Step1GetStarted() {
               {driverFiles.map((driver) => (
                 <div
                   key={driver.fileName}
-                  className="rounded-xl border border-slate-700 bg-slate-800/50 p-3"
+                  className="min-w-0 rounded-xl border border-slate-700 bg-slate-800/50 p-3"
                 >
                   <div className="flex items-center gap-3">
-                    <span className="inline-flex items-center gap-2 text-sm text-slate-300">
+                    <span className="inline-flex min-w-0 items-center gap-2 text-sm text-slate-300">
                       <FileSpreadsheet className="w-3.5 h-3.5 text-blue-400" />
-                      {driver.fileName}
+                      <span
+                        className="max-w-full truncate"
+                        title={driver.fileName}
+                      >
+                        {driver.fileName}
+                      </span>
                     </span>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
@@ -429,8 +434,8 @@ export default function Step1GetStarted() {
                   </div>
 
                   {driver.previewData.length > 0 && driver.columns.length > 0 && (
-                    <div className="mt-3 overflow-auto max-h-56 rounded-lg border border-slate-700">
-                      <table className="w-full text-xs">
+                    <div className="mt-3 max-w-full overflow-x-auto overflow-y-auto max-h-56 rounded-lg border border-slate-700">
+                      <table className="min-w-max w-full text-xs">
                         <thead className="sticky top-0 z-10">
                           <tr className="bg-slate-900/90">
                             {driver.columns.map((col) => (
