@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useBuildStore } from "@/lib/store";
 import { Button, Badge, Card, CardHeader, CardTitle, CardContent } from "@/components/ui";
 import { getSampleAnalysisBundle, type AnalysisBundle } from "@/lib/api";
-import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import {
   ResponsiveContainer,
   LineChart,
@@ -512,11 +512,31 @@ export default function Step4Analysis() {
   const endLabel = dataSummary?.end || "N/A";
   const rowsLabel = typeof dataSummary?.rows === "number" ? dataSummary.rows : 0;
   const freqLabel = dataSummary?.freq || "N/A";
+  const periodNoun =
+    typeof freqLabel === "string" && freqLabel.toUpperCase().startsWith("MS")
+      ? "month"
+      : typeof freqLabel === "string" && freqLabel.toUpperCase().startsWith("W")
+        ? "week"
+        : typeof freqLabel === "string" && freqLabel.toUpperCase().startsWith("D")
+          ? "day"
+          : "period";
   const baselineModelLabel = settings.baseline_model ? String(settings.baseline_model) : "N/A";
-  const multivariateModelLabel = settings.multi_model ? String(settings.multi_model) : "N/A";
+  const multivariateModelLabel = settings.multivariate_model
+    ? String(settings.multivariate_model)
+    : settings.multi_model
+      ? String(settings.multi_model)
+      : "N/A";
   const baselineRmse = Number(metrics?.baseline_rmse);
   const multivariateRmse = Number(metrics?.multivariate_rmse);
+  const baselineNrmsePct = Number(metrics?.baseline_nrmse_pct);
+  const multivariateNrmsePct = Number(metrics?.multivariate_nrmse_pct);
   const improvementPct = Number(metrics?.improvement_pct);
+  const hasImprovement = Number.isFinite(improvementPct);
+  const improved = hasImprovement && improvementPct >= 0;
+  const nrmseImproved =
+    Number.isFinite(baselineNrmsePct) &&
+    Number.isFinite(multivariateNrmsePct) &&
+    multivariateNrmsePct <= baselineNrmsePct;
   const evaluationSectionIds = ["summary", "metrics", "test-fit", "error-trend", "feature-importance"];
   const predictionSectionIds = ["future-forecast", "driver-series", "forecast-table"];
   const showEvaluation = selectedSections.some((id) => evaluationSectionIds.includes(id));
@@ -591,7 +611,7 @@ export default function Step4Analysis() {
                   <InfoCard
                     label="Target"
                     value={targetLabel}
-                    help="This is the thing we are trying to predict each week."
+                    help={`This is the thing we are trying to predict each ${periodNoun}.`}
                   />
                   <InfoCard
                     label="Date range"
@@ -601,7 +621,7 @@ export default function Step4Analysis() {
                   <InfoCard
                     label="Rows and freq"
                     value={`${rowsLabel} rows, ${freqLabel}`}
-                    help="Rows are weekly points. More rows generally means more stable training."
+                    help={`Rows are ${periodNoun}-level points. More rows generally means more stable training.`}
                   />
                   <InfoCard
                     label="Models"
@@ -615,30 +635,52 @@ export default function Step4Analysis() {
 
           {selectedSections.includes("metrics") && (
             <div className="space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <KpiCard
                   title="Baseline RMSE"
                   value={Number.isFinite(baselineRmse) ? fmt.format(baselineRmse) : "N/A"}
                   tone="neutral"
+                  status="reference"
                   explanation="Average prediction error size for the baseline model. Lower is better."
                 />
                 <KpiCard
                   title="Multivariate RMSE"
                   value={Number.isFinite(multivariateRmse) ? fmt.format(multivariateRmse) : "N/A"}
-                  tone="success"
+                  tone={hasImprovement ? (improved ? "success" : "danger") : "neutral"}
+                  status={hasImprovement ? (improved ? "improved" : "worse") : "reference"}
                   explanation="Average prediction error size for the advanced model. Lower is better."
+                />
+                <KpiCard
+                  title="Multivariate NRMSE"
+                  value={Number.isFinite(multivariateNrmsePct) ? `${pct.format(multivariateNrmsePct)}%` : "N/A"}
+                  tone={
+                    Number.isFinite(baselineNrmsePct) && Number.isFinite(multivariateNrmsePct)
+                      ? nrmseImproved
+                        ? "success"
+                        : "danger"
+                      : "neutral"
+                  }
+                  status={
+                    Number.isFinite(baselineNrmsePct) && Number.isFinite(multivariateNrmsePct)
+                      ? nrmseImproved
+                        ? "improved"
+                        : "worse"
+                      : "reference"
+                  }
+                  explanation="Normalized RMSE as percent of average actual value. Lower is better."
                 />
                 <KpiCard
                   title="Improvement"
                   value={Number.isFinite(improvementPct) ? `${pct.format(improvementPct)}%` : "N/A"}
-                  tone="success"
+                  tone={hasImprovement ? (improved ? "success" : "danger") : "neutral"}
+                  status={hasImprovement ? (improved ? "improved" : "worse") : "reference"}
                   explanation="How much the multivariate model reduced RMSE compared with baseline."
                 />
               </div>
               <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3">
                 <p className="text-xs font-semibold text-slate-300">Simple reading guide</p>
                 <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                  Lower RMSE means the model is usually closer to the real weekly value. A positive improvement means
+                  Lower RMSE means the model is usually closer to the real observed value. A positive improvement means
                   the multivariate model performed better than baseline on the test period.
                 </p>
               </div>
@@ -791,7 +833,7 @@ export default function Step4Analysis() {
             <div className="rounded-2xl border border-emerald-800/60 bg-emerald-950/20 px-4 py-3">
               <p className="text-sm font-semibold text-emerald-300">Phase 2: Review Future Forecast</p>
               <p className="text-xs text-emerald-200/80 mt-1">
-                These charts show what the model predicts for upcoming weeks.
+                These charts show what the model predicts for upcoming periods.
               </p>
             </div>
           )}
@@ -803,7 +845,7 @@ export default function Step4Analysis() {
               </CardHeader>
               <CardContent>
                 <p className="text-xs text-slate-500 mb-1">
-                  X-axis: full timeline, including historical data and future forecast weeks.
+                  X-axis: full timeline, including historical data and future forecast periods.
                 </p>
                 <p className="text-xs text-slate-500 mb-3">
                   Y-axis: {targetLabel} values. Actual history is shown first, then forecast lines continue.
@@ -916,7 +958,7 @@ export default function Step4Analysis() {
                 </CardHeader>
                 <CardContent>
                   <p className="text-xs text-slate-500 mb-3">
-                    Y-axis: weekly average temperature.
+                    Y-axis: average temperature per period.
                   </p>
                   {driverData.length === 0 ? (
                     <EmptyState text="No temperature driver data found." />
@@ -967,7 +1009,7 @@ export default function Step4Analysis() {
                 </CardHeader>
                 <CardContent>
                   <p className="text-xs text-slate-500 mb-3">
-                    Y-axis: number of holidays each week.
+                    Y-axis: number of holidays per period.
                   </p>
                   {driverData.length === 0 ? (
                     <EmptyState text="No holiday driver data found." />
@@ -1167,11 +1209,13 @@ function KpiCard({
   title,
   value,
   tone,
+  status,
   explanation,
 }: {
   title: string;
   value: string;
-  tone: "neutral" | "success";
+  tone: "neutral" | "success" | "danger";
+  status?: "reference" | "improved" | "worse";
   explanation?: string;
 }) {
   return (
@@ -1179,16 +1223,23 @@ function KpiCard({
       className={`rounded-2xl border p-4 ${
         tone === "success"
           ? "border-emerald-800 bg-emerald-900/20"
+          : tone === "danger"
+            ? "border-red-800 bg-red-900/20"
           : "border-slate-800 bg-slate-900/60"
       }`}
     >
       <p className="text-xs uppercase tracking-wide text-slate-400">{title}</p>
       <p className="text-2xl font-semibold text-white mt-1">{value}</p>
       <div className="mt-2 text-xs">
-        {tone === "success" ? (
+        {status === "improved" ? (
           <span className="inline-flex items-center gap-1 text-emerald-400">
             <CheckCircle2 className="w-3.5 h-3.5" />
             Improved over baseline
+          </span>
+        ) : status === "worse" ? (
+          <span className="inline-flex items-center gap-1 text-red-400">
+            <XCircle className="w-3.5 h-3.5" />
+            Worse than baseline
           </span>
         ) : (
           <span className="text-slate-500">Reference metric</span>

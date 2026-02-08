@@ -427,6 +427,49 @@ export default function Step1GetStarted() {
                       {driver.rowCount.toLocaleString()} rows
                     </span>
                   </div>
+
+                  {driver.previewData.length > 0 && driver.columns.length > 0 && (
+                    <div className="mt-3 overflow-auto max-h-56 rounded-lg border border-slate-700">
+                      <table className="w-full text-xs">
+                        <thead className="sticky top-0 z-10">
+                          <tr className="bg-slate-900/90">
+                            {driver.columns.map((col) => (
+                              <th
+                                key={col}
+                                className={`px-2 py-1.5 text-left font-medium whitespace-nowrap border-b border-slate-700 ${
+                                  col === driver.detectedDateCol
+                                    ? "text-blue-300"
+                                    : driver.numericColumns.includes(col)
+                                      ? "text-sky-300"
+                                      : "text-slate-400"
+                                }`}
+                              >
+                                <div>{col}</div>
+                                <div className="text-[10px] font-normal text-slate-600 mt-0.5">
+                                  {driver.columnDtypes[col] || "-"}
+                                </div>
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {driver.previewData.slice(0, 5).map((row, i) => (
+                            <tr key={i} className="border-b border-slate-800/50">
+                              {driver.columns.map((col) => (
+                                <td key={col} className="px-2 py-1.5 whitespace-nowrap text-slate-300">
+                                  {row[col] === null || row[col] === undefined ? (
+                                    <span className="text-slate-600 italic">null</span>
+                                  ) : (
+                                    String(row[col])
+                                  )}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

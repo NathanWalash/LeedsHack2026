@@ -23,6 +23,12 @@ const FREQUENCY_OPTIONS = [
   { id: "YS", label: "Yearly", icon: <Calendar className="w-4 h-4" /> },
 ];
 
+const DRIVER_FREQUENCY_OPTIONS = [
+  { id: "D", label: "Daily", icon: <Calendar className="w-4 h-4" /> },
+  { id: "W", label: "Weekly", icon: <Calendar className="w-4 h-4" /> },
+  { id: "MS", label: "Monthly", icon: <Calendar className="w-4 h-4" /> },
+];
+
 const MISSING_STRATEGY_OPTIONS = [
   {
     id: "ffill",
@@ -100,6 +106,8 @@ export default function Step2ProcessData() {
     setTargetCol,
     frequency,
     setFrequency,
+    driverFrequency,
+    setDriverFrequency,
     missingStrategy,
     setMissingStrategy,
     missingFillValue,
@@ -180,6 +188,7 @@ export default function Step2ProcessData() {
         dateCol: resolvedDateCol,
         targetCol,
         frequency: frequency || "W",
+        driverFrequency: driverFrequency || undefined,
         outlierStrategy: outlierStrategy || "keep",
         driverOutlierStrategy: driverOutlierStrategy || "keep",
       });
@@ -283,6 +292,18 @@ export default function Step2ProcessData() {
           columns={3}
           fullWidth
         />
+
+        {driverFiles.length > 0 && (
+          <BubbleSelect
+            label="How often is your driver data?"
+            options={DRIVER_FREQUENCY_OPTIONS}
+            selected={driverFrequency || frequency || "W"}
+            onSelect={setDriverFrequency}
+            layout="grid"
+            columns={3}
+            fullWidth
+          />
+        )}
 
         <BubbleSelect
           label="How should we fill missing values?"
