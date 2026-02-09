@@ -26,7 +26,7 @@ from app.core.processing import (
     get_preview,
 )
 from app.core.training import train_and_forecast
-from app.core.preprocessing import clean_dataframe_for_training
+from app.core.preprocessing import clean_dataframe_for_training, handle_missing, handle_outliers
 from app.core.gemini import generate_chat_response
 from app.core.paths import OUTPUTS_DIR
 
@@ -249,6 +249,10 @@ class ProcessRequest(BaseModel):
     driver_date_col: str | None = None
     outlier_strategy: str = "cap"
     driver_outlier_strategy: str = "keep"
+    missing_strategy: str | None = None
+    missing_fill_value: float | None = None
+    driver_missing_strategy: str | None = None
+    driver_settings: dict | None = None
 
 
 class ChatRequest(BaseModel):
@@ -524,6 +528,8 @@ async def process_data(req: ProcessRequest):
         )
 
     raw_df = _dataframes[req.project_id].copy()
+    normalized_missing = (req.missing_strategy or "").strip() or None
+    normalized_driver_missing = (req.driver_missing_strategy or "").strip() or None
 
     candidate_driver_cols = [
         col
@@ -543,6 +549,9 @@ async def process_data(req: ProcessRequest):
             driver_cols=candidate_driver_cols,
             outlier_action=normalized_outlier,
             driver_outlier_action=normalized_driver_outlier,
+            target_missing_strategy=normalized_missing,
+            driver_missing_strategy=normalized_driver_missing,
+            target_missing_fill_value=req.missing_fill_value,
             min_rows=20,
         )
     except ValueError as e:
@@ -564,6 +573,9 @@ async def process_data(req: ProcessRequest):
                     driver_cols=candidate_driver_cols,
                     outlier_action=normalized_outlier,
                     driver_outlier_action=normalized_driver_outlier,
+                    target_missing_strategy=normalized_missing,
+                    driver_missing_strategy=normalized_driver_missing,
+                    target_missing_fill_value=req.missing_fill_value,
                     min_rows=20,
                 )
             except ValueError as inner_e:
@@ -611,6 +623,16 @@ async def process_data(req: ProcessRequest):
         _projects[req.project_id].setdefault("config", {})
         _projects[req.project_id]["config"]["frequency"] = selected_target_freq
 
+    driver_settings = req.driver_settings if isinstance(req.driver_settings, dict) else {}
+
+    def _driver_setting(file_name: str, key: str, default_value: str | None) -> str | None:
+        settings = driver_settings.get(file_name)
+        if isinstance(settings, dict):
+            value = settings.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return default_value
+
     for idx, raw_driver_df in enumerate(driver_files):
         if raw_driver_df is None or raw_driver_df.empty:
             continue
@@ -635,6 +657,13 @@ async def process_data(req: ProcessRequest):
         else:
             selected_driver_freq = driver_resample_freq
 
+        driver_missing_strategy = _driver_setting(
+            driver_file_name, "missing_strategy", normalized_driver_missing
+        )
+        driver_outlier_strategy = _driver_setting(
+            driver_file_name, "outlier_strategy", normalized_driver_outlier
+        )
+
         candidate_numeric = [
             c for c in detect_numeric_columns(driver_df)
             if c != requested_driver_date_col
@@ -649,6 +678,29 @@ async def process_data(req: ProcessRequest):
         driver_clean = driver_df[[requested_driver_date_col, *resolved_numeric_cols]].copy()
         driver_clean = driver_clean.sort_values(requested_driver_date_col).reset_index(drop=True)
         driver_clean = driver_clean.rename(columns={requested_driver_date_col: date_col})
+
+        if driver_missing_strategy:
+            for col in resolved_numeric_cols:
+                if driver_missing_strategy == "interpolate":
+                    driver_clean = handle_missing(driver_clean, col, "interpolate")
+                    driver_clean = handle_missing(driver_clean, col, "ffill")
+                    driver_clean = handle_missing(driver_clean, col, "bfill")
+                elif driver_missing_strategy in {"ffill", "bfill", "mean", "median", "drop"}:
+                    driver_clean = handle_missing(driver_clean, col, driver_missing_strategy)
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="driver_missing_strategy must be one of: drop, mean, median, ffill, bfill, interpolate",
+                    )
+
+        if driver_outlier_strategy and driver_outlier_strategy != "keep":
+            for col in resolved_numeric_cols:
+                driver_clean = handle_outliers(
+                    driver_clean,
+                    col,
+                    action=driver_outlier_strategy,
+                    method="iqr",
+                )
 
         # If a single generic "value" column came from a temp file,
         # expose it with a stable semantic name expected by Step 3.
@@ -686,6 +738,8 @@ async def process_data(req: ProcessRequest):
                     "detected": driver_freq_info,
                     "selected": selected_driver_freq,
                 },
+                "missing_strategy": driver_missing_strategy,
+                "outlier_strategy": driver_outlier_strategy,
             }
         )
         driver_numeric_cols.extend(renamed_cols)
