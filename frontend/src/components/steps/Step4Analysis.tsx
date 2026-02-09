@@ -317,7 +317,7 @@ export default function Step4Analysis() {
     () =>
       (analysis?.datasets.test_predictions || [])
         .map((r) => ({
-          ts: parseTimestamp(r.period_ending),
+          ts: parseTimestamp(r.period_ending ?? ""),
           period_ending: r.period_ending,
           actual: Number(r.actual),
           baseline: Number(r.baseline),
@@ -381,7 +381,7 @@ export default function Step4Analysis() {
     () =>
       (analysis?.datasets.forecast || [])
         .map((r) => ({
-          ts: parseTimestamp(r.period_ending),
+          ts: parseTimestamp(r.period_ending ?? ""),
           period_ending: r.period_ending,
           baseline_forecast: Number(r.baseline_forecast),
           multivariate_forecast: Number(r.multivariate_forecast),
@@ -728,6 +728,19 @@ export default function Step4Analysis() {
   const baselineRmse = Number(metrics?.baseline_rmse);
   const multivariateRmse = Number(metrics?.multivariate_rmse);
   const improvementPct = Number(metrics?.improvement_pct);
+  const baselineMae = Number(metrics?.baseline_mae);
+  const multivariateMae = Number(metrics?.multivariate_mae);
+  const baselineNrmse = Number(metrics?.baseline_nrmse_pct);
+  const multivariateNrmse = Number(metrics?.multivariate_nrmse_pct);
+  const baselineWfRmse = Number(metrics?.baseline_walk_forward_rmse);
+  const multivariateWfRmse = Number(metrics?.multivariate_walk_forward_rmse);
+  const settings = analysis?.manifest?.settings || {};
+  const testWindowPeriods = Number(settings["test_window_periods"]);
+  const horizonPeriods = Number(settings["forecast_horizon"]);
+  const lagsUsed = Array.isArray(settings["lags"]) ? (settings["lags"] as unknown[]).join(", ") : "";
+  const driversUsed = Array.isArray(settings["selected_drivers"])
+    ? (settings["selected_drivers"] as unknown[]).join(", ")
+    : "";
   const targetLabel = analysis?.manifest.data_summary.target_name || "Target";
   const slideFlow = SLIDE_FLOW;
   const currentSlide = slideFlow[currentSlideIndex] || null;
@@ -835,7 +848,7 @@ export default function Step4Analysis() {
                     <InfoCard
                       label="Target"
                       value={analysis.manifest.data_summary.target_name}
-                      help="This is the thing we are trying to predict each week."
+                      help="This is the thing we are trying to predict each period."
                     />
                     <InfoCard
                       label="Date range"
@@ -845,7 +858,7 @@ export default function Step4Analysis() {
                     <InfoCard
                       label="Rows and freq"
                       value={`${analysis.manifest.data_summary.rows} rows, ${analysis.manifest.data_summary.freq}`}
-                      help="Rows are weekly points. More rows generally means more stable training."
+                      help="Rows are period points. More rows generally means more stable training."
                     />
                     <InfoCard
                       label="Models"
@@ -861,6 +874,23 @@ export default function Step4Analysis() {
                             : "N/A"
                       }`}
                       help="Baseline is the simpler reference model. Multivariate uses extra driver signals."
+                    />
+                    <InfoCard
+                      label="Holdout + horizon"
+                      value={`${Number.isFinite(testWindowPeriods) ? testWindowPeriods : "N/A"} holdout, ${
+                        Number.isFinite(horizonPeriods) ? horizonPeriods : "N/A"
+                      } forecast`}
+                      help="Holdout is the test window size in periods. Horizon is how many periods are forecast."
+                    />
+                    <InfoCard
+                      label="Lags"
+                      value={lagsUsed || "N/A"}
+                      help="Lagged target periods used as inputs."
+                    />
+                    <InfoCard
+                      label="Drivers"
+                      value={driversUsed || "None"}
+                      help="Selected driver signals included in the multivariate model."
                     />
                   </div>
                 </CardContent>
@@ -883,6 +913,56 @@ export default function Step4Analysis() {
                   value={Number.isFinite(improvementPct) ? `${pct.format(improvementPct)}%` : "N/A"}
                   tone="success"
                   explanation="Percent drop in RMSE versus baseline. Positive means the multivariate model improved."
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <KpiCard
+                  title="Baseline MAE"
+                  value={Number.isFinite(baselineMae) ? fmt.format(baselineMae) : "N/A"}
+                  tone="neutral"
+                  explanation="Average absolute error for the baseline model."
+                />
+                <KpiCard
+                  title="Multivariate MAE"
+                  value={Number.isFinite(multivariateMae) ? fmt.format(multivariateMae) : "N/A"}
+                  tone="success"
+                  explanation="Average absolute error for the multivariate model."
+                />
+                <KpiCard
+                  title="NRMSE %"
+                  value={
+                    Number.isFinite(multivariateNrmse)
+                      ? `${pct.format(multivariateNrmse)}%`
+                      : Number.isFinite(baselineNrmse)
+                        ? `${pct.format(baselineNrmse)}%`
+                        : "N/A"
+                  }
+                  tone="neutral"
+                  explanation="RMSE scaled by mean target value. Lower is better."
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <KpiCard
+                  title="Baseline WF RMSE"
+                  value={Number.isFinite(baselineWfRmse) ? fmt.format(baselineWfRmse) : "N/A"}
+                  tone="neutral"
+                  explanation="Walk-forward RMSE for baseline."
+                />
+                <KpiCard
+                  title="Multivariate WF RMSE"
+                  value={Number.isFinite(multivariateWfRmse) ? fmt.format(multivariateWfRmse) : "N/A"}
+                  tone="success"
+                  explanation="Walk-forward RMSE for multivariate."
+                />
+                <KpiCard
+                  title="Improvement (abs)"
+                  value={
+                    Number.isFinite(baselineRmse) && Number.isFinite(multivariateRmse)
+                      ? fmt.format(baselineRmse - multivariateRmse)
+                      : "N/A"
+                  }
+                  tone="neutral"
+                  explanation="Absolute RMSE reduction versus baseline."
                 />
               </div>
               <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3">

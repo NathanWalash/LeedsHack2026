@@ -270,7 +270,7 @@ export default function Step5Showcase() {
     () =>
       (analysis?.datasets.test_predictions || [])
         .map((r) => ({
-          ts: parseTs(r.period_ending),
+          ts: parseTs(r.period_ending ?? ""),
           actual: Number(r.actual),
           baseline: Number(r.baseline),
           multivariate: Number(r.multivariate),
@@ -298,7 +298,7 @@ export default function Step5Showcase() {
     () =>
       (analysis?.datasets.forecast || [])
         .map((r) => ({
-          ts: parseTs(r.period_ending),
+          ts: parseTs(r.period_ending ?? ""),
           baseline_forecast: Number(r.baseline_forecast),
           multivariate_forecast: Number(r.multivariate_forecast),
         }))

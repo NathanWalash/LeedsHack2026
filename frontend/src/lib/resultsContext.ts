@@ -48,7 +48,7 @@ function buildTrendSummary(analysis: AnalysisBundle): ResultsPageContextData["tr
   }
 
   for (const row of analysis.datasets.forecast || []) {
-    const ts = toTs(row.period_ending ?? row.date ?? row.index ?? "");
+    const ts = toTs(row.period_ending ?? "");
     const value = Number(row.multivariate_forecast);
     if (ts === null || !Number.isFinite(value)) continue;
     series.push({ ts, value });

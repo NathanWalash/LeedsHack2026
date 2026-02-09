@@ -211,7 +211,7 @@ export function StoryNotebook({ story }: { story: StoryDetail }) {
     () =>
       (analysis?.datasets.test_predictions || [])
         .map((r) => ({
-          ts: parseTs(r.period_ending),
+          ts: parseTs(r.period_ending ?? ""),
           actual: Number(r.actual),
           baseline: Number(r.baseline),
           multivariate: Number(r.multivariate),
@@ -239,7 +239,7 @@ export function StoryNotebook({ story }: { story: StoryDetail }) {
     () =>
       (analysis?.datasets.forecast || [])
         .map((r) => ({
-          ts: parseTs(r.period_ending),
+          ts: parseTs(r.period_ending ?? ""),
           baseline_forecast: Number(r.baseline_forecast),
           multivariate_forecast: Number(r.multivariate_forecast),
         }))
