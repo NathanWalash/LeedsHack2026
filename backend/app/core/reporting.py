@@ -131,7 +131,7 @@ def evaluate_with_plot(
 
     test_df = pd.DataFrame(
         {
-            "week_ending": test_index,
+            "period_ending": test_index,
             "actual": y_test,
             "baseline": y_pred_base,
             "multivariate": y_pred_multi,

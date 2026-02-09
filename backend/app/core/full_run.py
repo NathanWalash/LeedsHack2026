@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--date_col",
         type=str,
-        default="week_ending",
+        default="period_ending",
         help="Date column name",
     )
     parser.add_argument(
@@ -61,10 +61,10 @@ def parse_args() -> argparse.Namespace:
         help="Run lag grid search and use best lag set",
     )
     parser.add_argument(
-        "--test_window_weeks",
+        "--test_window_periods",
         type=int,
         default=48,
-        help="Holdout window size in weeks",
+        help="Holdout window size in periods",
     )
     parser.add_argument(
         "--validation_mode",
@@ -116,7 +116,7 @@ def main() -> None:
         multivariate_model=args.multivariate_model,
         lag_config=args.lag_config,
         auto_select_lags=args.auto_select_lags,
-        test_window_weeks=args.test_window_weeks,
+        test_window_weeks=args.test_window_periods,
         validation_mode=args.validation_mode,
         calendar_features=args.calendar_features,
         output_dir=args.output_dir,
@@ -130,7 +130,7 @@ def main() -> None:
     print(f"  multivariate_model: {args.multivariate_model}")
     print(f"  lag_config: {args.lag_config}")
     print(f"  auto_select_lags: {args.auto_select_lags}")
-    print(f"  test_window_weeks: {args.test_window_weeks}")
+    print(f"  test_window_periods: {args.test_window_periods}")
     print(f"  validation_mode: {args.validation_mode}")
     print(f"  forecast_horizon: {args.forecast_horizon}")
 

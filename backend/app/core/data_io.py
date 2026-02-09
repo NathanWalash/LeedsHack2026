@@ -14,8 +14,11 @@ except ImportError:  # pragma: no cover
 
 def load_target(path: Path, target: str) -> pd.Series:
     df = pd.read_csv(path)
-    df["week_ending"] = pd.to_datetime(df["week_ending"], errors="coerce")
-    df = df.dropna(subset=["week_ending"]).sort_values("week_ending")
+    date_col = "period_ending"
+    if date_col not in df.columns:
+        raise ValueError("Date column not found: expected 'period_ending'")
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    df = df.dropna(subset=[date_col]).sort_values(date_col)
 
     if target not in df.columns:
         raise ValueError(f"Target column not found: {target}")
@@ -23,7 +26,7 @@ def load_target(path: Path, target: str) -> pd.Series:
     df[target] = coerce_numeric(df[target])
     df = df.dropna(subset=[target])
 
-    return df.set_index("week_ending")[target]
+    return df.set_index(date_col)[target]
 
 
 def load_weekly_temp(path: Path, start: pd.Timestamp, end: pd.Timestamp) -> pd.Series:
