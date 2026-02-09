@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  getProjectAnalysisBundle,
   getSampleAnalysisBundle,
   type AnalysisBundle,
   type StoryDetail,
@@ -168,7 +169,9 @@ export function StoryNotebook({ story }: { story: StoryDetail }) {
       setAnalysisLoading(true);
       setAnalysisError("");
       try {
-        const bundle = await getSampleAnalysisBundle();
+        const bundle = story?.project_id
+          ? await getProjectAnalysisBundle(story.project_id)
+          : await getSampleAnalysisBundle();
         if (!mounted) return;
         setAnalysis(bundle);
       } catch {

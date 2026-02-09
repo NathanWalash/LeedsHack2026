@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useBuildStore } from "@/lib/store";
 import { Button, Badge, Card, CardHeader, CardTitle, CardContent } from "@/components/ui";
-import { getSampleAnalysisBundle, type AnalysisBundle } from "@/lib/api";
+import { getProjectAnalysisBundle, getSampleAnalysisBundle, type AnalysisBundle } from "@/lib/api";
 import { buildResultsPageContext } from "@/lib/resultsContext";
 import { AlertCircle, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import {
@@ -259,6 +259,7 @@ function filterRowsByRange<T extends { ts: number }>(
 }
 
 export default function Step4Analysis() {
+  const projectId = useBuildStore((s) => s.projectId);
   const completeStep = useBuildStore((s) => s.completeStep);
   const nextStep = useBuildStore((s) => s.nextStep);
   const prevStep = useBuildStore((s) => s.prevStep);
@@ -289,7 +290,9 @@ export default function Step4Analysis() {
       setLoading(true);
       setLoadError("");
       try {
-        const bundle = await getSampleAnalysisBundle();
+        const bundle = projectId
+          ? await getProjectAnalysisBundle(projectId)
+          : await getSampleAnalysisBundle();
         if (!mounted) return;
         setAnalysis(bundle);
       } catch (err: unknown) {

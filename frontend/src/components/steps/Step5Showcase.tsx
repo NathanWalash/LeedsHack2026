@@ -6,6 +6,7 @@ import { upsertPersistedDebugStory } from "@/lib/debugStories";
 import { upsertLocalStory } from "@/lib/localStories";
 import {
   createProject,
+  getProjectAnalysisBundle,
   getSampleAnalysisBundle,
   type StoryDetail,
   requestAISuggestion,
@@ -230,7 +231,9 @@ export default function Step5Showcase() {
       setAnalysisLoading(true);
       setAnalysisError("");
       try {
-        const bundle = await getSampleAnalysisBundle();
+        const bundle = projectId
+          ? await getProjectAnalysisBundle(projectId)
+          : await getSampleAnalysisBundle();
         if (mounted) setAnalysis(bundle);
       } catch {
         if (mounted) setAnalysisError("Could not load analysis bundle.");
