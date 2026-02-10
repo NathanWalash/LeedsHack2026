@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  getProjectAnalysisBundle,
   getSampleAnalysisBundle,
   type AnalysisBundle,
   type StoryDetail,
@@ -30,12 +31,12 @@ function parseTs(value: string) {
   return Number.isFinite(ts) ? ts : null;
 }
 function getDateString(row: LooseRecord): string | null {
-  const candidate = row.week_ending ?? row.date ?? row.index ?? row.period;
+  const candidate = row.period_ending ?? row.date ?? row.index ?? row.period;
   return typeof candidate === "string" && candidate.trim() ? candidate : null;
 }
 function getPrimaryNumericValue(row: LooseRecord): number | null {
   for (const [key, raw] of Object.entries(row)) {
-    if (key === "week_ending" || key === "date" || key === "index") continue;
+    if (key === "period_ending" || key === "date" || key === "index") continue;
     const n = Number(raw);
     if (Number.isFinite(n)) return n;
   }
@@ -168,7 +169,9 @@ export function StoryNotebook({ story }: { story: StoryDetail }) {
       setAnalysisLoading(true);
       setAnalysisError("");
       try {
-        const bundle = await getSampleAnalysisBundle();
+        const bundle = story?.project_id
+          ? await getProjectAnalysisBundle(story.project_id)
+          : await getSampleAnalysisBundle();
         if (!mounted) return;
         setAnalysis(bundle);
       } catch {
@@ -189,11 +192,15 @@ export function StoryNotebook({ story }: { story: StoryDetail }) {
       (analysis?.datasets.target_series || [])
         .map((r) => {
           const row = r as LooseRecord;
-          const date = (row.week_ending ?? row.date ?? row.index) as string | undefined;
+          const date = (row.period_ending ?? row.date ?? row.index) as
+            | string
+            | undefined;
           if (!date) return null;
           const ts = parseTs(date);
           if (ts === null) return null;
-          const key = Object.keys(row).find((k) => !["week_ending", "date", "index"].includes(k));
+          const key = Object.keys(row).find(
+            (k) => !["period_ending", "date", "index"].includes(k)
+          );
           const val = key ? Number(row[key]) : NaN;
           if (!Number.isFinite(val)) return null;
           return { ts, actual: val };
@@ -207,7 +214,7 @@ export function StoryNotebook({ story }: { story: StoryDetail }) {
     () =>
       (analysis?.datasets.test_predictions || [])
         .map((r) => ({
-          ts: parseTs(r.week_ending),
+          ts: parseTs(r.period_ending ?? ""),
           actual: Number(r.actual),
           baseline: Number(r.baseline),
           multivariate: Number(r.multivariate),
@@ -235,7 +242,7 @@ export function StoryNotebook({ story }: { story: StoryDetail }) {
     () =>
       (analysis?.datasets.forecast || [])
         .map((r) => ({
-          ts: parseTs(r.week_ending),
+          ts: parseTs(r.period_ending ?? ""),
           baseline_forecast: Number(r.baseline_forecast),
           multivariate_forecast: Number(r.multivariate_forecast),
         }))
@@ -319,7 +326,7 @@ export function StoryNotebook({ story }: { story: StoryDetail }) {
   );
 
   const driverData = useMemo(() => {
-    type DriverRow = { ts: number; week_ending: string } & Record<string, number | string | null>;
+    type DriverRow = { ts: number; period_ending: string } & Record<string, number | string | null>;
     const merged = new Map<number, DriverRow>();
     const settings = analysis?.manifest?.settings || {};
     const preferredDriverKeys = Array.from(
@@ -338,10 +345,14 @@ export function StoryNotebook({ story }: { story: StoryDetail }) {
         const ts = parseTs(date);
         if (ts === null) continue;
 
-        const existing = merged.get(ts) || { ts, week_ending: date };
-        const next: DriverRow = { ...existing, ts, week_ending: existing.week_ending || date };
+        const existing = merged.get(ts) || { ts, period_ending: date };
+        const next: DriverRow = {
+          ...existing,
+          ts,
+          period_ending: existing.period_ending || date,
+        };
         for (const [key, raw] of Object.entries(asRecord)) {
-          if (key === "week_ending" || key === "date" || key === "index") continue;
+          if (key === "period_ending" || key === "date" || key === "index") continue;
           const n = Number(raw);
           next[key] = Number.isFinite(n) ? n : null;
         }
@@ -359,7 +370,7 @@ export function StoryNotebook({ story }: { story: StoryDetail }) {
       } else {
         const sample = featureRows[0] as LooseRecord;
         for (const key of Object.keys(sample)) {
-          if (["week_ending", "date", "index", "period", "y"].includes(key)) continue;
+          if (["period_ending", "date", "index", "period", "y"].includes(key)) continue;
           if (key.startsWith("target_lag_") || key.endsWith("_lag_1") || key.endsWith("_lag_2")) continue;
           candidateKeys.add(key);
         }
@@ -372,8 +383,12 @@ export function StoryNotebook({ story }: { story: StoryDetail }) {
         const ts = parseTs(date);
         if (ts === null) continue;
 
-        const existing = merged.get(ts) || { ts, week_ending: date };
-        const next: DriverRow = { ...existing, ts, week_ending: existing.week_ending || date };
+        const existing = merged.get(ts) || { ts, period_ending: date };
+        const next: DriverRow = {
+          ...existing,
+          ts,
+          period_ending: existing.period_ending || date,
+        };
         let assigned = false;
         for (const key of candidateKeys) {
           if (!(key in asRecord)) continue;
@@ -404,11 +419,11 @@ export function StoryNotebook({ story }: { story: StoryDetail }) {
         asRecord.temp ??
         getPrimaryNumericValue(asRecord);
       const temp = Number(tempRaw);
-      const existing = merged.get(ts) || { ts, week_ending: date };
+      const existing = merged.get(ts) || { ts, period_ending: date };
       merged.set(ts, {
         ...existing,
         ts,
-        week_ending: existing.week_ending || date,
+        period_ending: existing.period_ending || date,
         temp_mean: Number.isFinite(temp) ? temp : null,
       });
     }
@@ -422,11 +437,11 @@ export function StoryNotebook({ story }: { story: StoryDetail }) {
 
       const countRaw = asRecord.holiday_count ?? asRecord.value ?? getPrimaryNumericValue(asRecord);
       const count = Number(countRaw);
-      const existing = merged.get(ts) || { ts, week_ending: date };
+      const existing = merged.get(ts) || { ts, period_ending: date };
       merged.set(ts, {
         ...existing,
         ts,
-        week_ending: existing.week_ending || date,
+        period_ending: existing.period_ending || date,
         holiday_count: Number.isFinite(count) ? count : null,
       });
     }
@@ -438,7 +453,7 @@ export function StoryNotebook({ story }: { story: StoryDetail }) {
     const keys = new Set<string>();
     for (const row of driverData as Array<Record<string, unknown>>) {
       for (const key of Object.keys(row)) {
-        if (key === "ts" || key === "week_ending") continue;
+        if (key === "ts" || key === "period_ending") continue;
         keys.add(key);
       }
     }

@@ -105,6 +105,10 @@ export async function processData(options: {
   driverDateCol?: string;
   outlierStrategy: string;
   driverOutlierStrategy: string;
+  missingStrategy?: string;
+  missingFillValue?: string;
+  driverMissingStrategy?: string;
+  driverSettings?: Record<string, { frequency?: string; missingStrategy?: string; outlierStrategy?: string }>;
 }) {
   const res = await api.post("/process", {
     project_id: options.projectId,
@@ -115,6 +119,10 @@ export async function processData(options: {
     driver_date_col: options.driverDateCol,
     outlier_strategy: options.outlierStrategy,
     driver_outlier_strategy: options.driverOutlierStrategy,
+    missing_strategy: options.missingStrategy,
+    missing_fill_value: options.missingFillValue ? Number(options.missingFillValue) : undefined,
+    driver_missing_strategy: options.driverMissingStrategy,
+    driver_settings: options.driverSettings,
   });
   return res.data;
 }
@@ -224,12 +232,12 @@ export interface AnalysisBundle {
   available: Record<string, boolean>;
   datasets: {
     forecast: Array<{
-      week_ending: string;
+      period_ending?: string;
       baseline_forecast: number;
       multivariate_forecast: number;
     }>;
     test_predictions: Array<{
-      week_ending: string;
+      period_ending?: string;
       actual: number;
       baseline: number;
       multivariate: number;
@@ -241,11 +249,12 @@ export interface AnalysisBundle {
     feature_frame: Array<Record<string, string | number | null>>;
     target_series: Array<Record<string, string | number | null>>;
     temp_weekly: Array<{
-      date: string;
+      period_ending?: string;
+      date?: string;
       temp_mean: number;
     }>;
     holiday_weekly: Array<{
-      week_ending?: string;
+      period_ending?: string;
       index?: string;
       date?: string;
       holiday_count: number;
@@ -256,6 +265,11 @@ export interface AnalysisBundle {
 
 export async function getSampleAnalysisBundle(): Promise<AnalysisBundle> {
   const res = await api.get("/analysis/sample");
+  return res.data as AnalysisBundle;
+}
+
+export async function getProjectAnalysisBundle(projectId: string): Promise<AnalysisBundle> {
+  const res = await api.get(`/analysis/project/${projectId}`);
   return res.data as AnalysisBundle;
 }
 

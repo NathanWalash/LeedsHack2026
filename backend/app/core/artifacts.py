@@ -40,7 +40,7 @@ def write_run_artifacts(
     result["importances"].reset_index().rename(
         columns={"index": "feature", 0: "importance"}
     ).to_csv(artifacts_dir / "feature_importance.csv", index=False)
-    frame.reset_index().rename(columns={"index": "week_ending"}).to_csv(
+    frame.reset_index().rename(columns={"index": "period_ending"}).to_csv(
         artifacts_dir / "feature_frame.csv", index=False
     )
     target_series.rename(target_name).reset_index().to_csv(
@@ -58,7 +58,7 @@ def write_run_artifacts(
 
     data_summary = {
         "target_name": target_name,
-        "date_col": "week_ending",
+        "date_col": "period_ending",
         "start": str(target_series.index.min().date()),
         "end": str(target_series.index.max().date()),
         "rows": int(target_series.shape[0]),

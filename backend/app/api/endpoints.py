@@ -26,7 +26,7 @@ from app.core.processing import (
     get_preview,
 )
 from app.core.training import train_and_forecast
-from app.core.preprocessing import clean_dataframe_for_training
+from app.core.preprocessing import clean_dataframe_for_training, handle_missing, handle_outliers
 from app.core.gemini import generate_chat_response
 from app.core.paths import OUTPUTS_DIR
 
@@ -134,6 +134,25 @@ def _resolve_analysis_path_multi(path_value: str, fallbacks: list[str]) -> Path:
     return _resolve_analysis_path("", fallbacks[0])
 
 
+def _resolve_analysis_path_for_dir(base_dir: Path, path_value: str, fallback: str) -> Path:
+    raw = path_value or fallback
+    raw_path = Path(raw)
+    candidate = raw_path.resolve() if raw_path.is_absolute() else (base_dir / raw_path).resolve()
+    if not str(candidate).startswith(str(base_dir.resolve())):
+        raise HTTPException(status_code=400, detail="Invalid analysis file path")
+    return candidate
+
+
+def _resolve_analysis_path_multi_for_dir(base_dir: Path, path_value: str, fallbacks: list[str]) -> Path:
+    if path_value:
+        return _resolve_analysis_path_for_dir(base_dir, path_value, fallbacks[0])
+    for fallback in fallbacks:
+        candidate = _resolve_analysis_path_for_dir(base_dir, "", fallback)
+        if candidate.exists():
+            return candidate
+    return _resolve_analysis_path_for_dir(base_dir, "", fallbacks[0])
+
+
 def _csv_records(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
@@ -213,22 +232,27 @@ class TrainRequest(BaseModel):
     multivariate_model: str = "gbm"
     lag_config: str = "1,2,4"
     auto_select_lags: bool = False
-    test_window_weeks: int = 48
+    test_window_periods: int = 48
+    test_window_weeks: int | None = None
     validation_mode: str = "walk_forward"
     calendar_features: bool = False
     holiday_features: bool = False
-    frequency: str = "W"
+    frequency: str | None = None
 
 
 class ProcessRequest(BaseModel):
     project_id: str
     date_col: str
     target_col: str
-    frequency: str = "W"
+    frequency: str | None = None
     driver_frequency: str | None = None
     driver_date_col: str | None = None
     outlier_strategy: str = "cap"
     driver_outlier_strategy: str = "keep"
+    missing_strategy: str | None = None
+    missing_fill_value: float | None = None
+    driver_missing_strategy: str | None = None
+    driver_settings: dict | None = None
 
 
 class ChatRequest(BaseModel):
@@ -433,11 +457,42 @@ def _normalize_frequency(freq: str | None) -> str:
     mapping = {
         "D": "D",
         "W": "W-SUN",
+        "W-SUN": "W-SUN",
         "MS": "MS",
+        "M": "MS",
+        "ME": "MS",
         "QS": "QS",
         "YS": "YS",
     }
     return mapping.get(freq.upper(), "W-SUN")
+
+
+def _freq_to_days(freq: str | None) -> int | None:
+    if not freq:
+        return None
+    upper = freq.upper()
+    if upper.startswith("D"):
+        return 1
+    if upper.startswith("W"):
+        return 7
+    if upper.startswith("M"):
+        return 30
+    if upper.startswith("Q"):
+        return 91
+    if upper.startswith("Y"):
+        return 365
+    return None
+
+
+def _label_to_freq(label: str | None) -> str | None:
+    if not label:
+        return None
+    mapping = {
+        "daily": "D",
+        "weekly": "W-SUN",
+        "monthly": "MS",
+    }
+    return mapping.get(label.lower())
 
 
 def _normalized_name(value: str) -> str:
@@ -473,6 +528,8 @@ async def process_data(req: ProcessRequest):
         )
 
     raw_df = _dataframes[req.project_id].copy()
+    normalized_missing = (req.missing_strategy or "").strip() or None
+    normalized_driver_missing = (req.driver_missing_strategy or "").strip() or None
 
     candidate_driver_cols = [
         col
@@ -483,7 +540,7 @@ async def process_data(req: ProcessRequest):
     requested_date_col = req.date_col
     process_note: str | None = None
     resample_freq = _normalize_frequency(req.frequency)
-    driver_resample_freq = _normalize_frequency(req.driver_frequency) if req.driver_frequency else resample_freq
+    driver_resample_freq = _normalize_frequency(req.driver_frequency) if req.driver_frequency else None
     try:
         cleaned_df, prep_report = clean_dataframe_for_training(
             raw_df,
@@ -492,6 +549,9 @@ async def process_data(req: ProcessRequest):
             driver_cols=candidate_driver_cols,
             outlier_action=normalized_outlier,
             driver_outlier_action=normalized_driver_outlier,
+            target_missing_strategy=normalized_missing,
+            driver_missing_strategy=normalized_driver_missing,
+            target_missing_fill_value=req.missing_fill_value,
             min_rows=20,
         )
     except ValueError as e:
@@ -513,6 +573,9 @@ async def process_data(req: ProcessRequest):
                     driver_cols=candidate_driver_cols,
                     outlier_action=normalized_outlier,
                     driver_outlier_action=normalized_driver_outlier,
+                    target_missing_strategy=normalized_missing,
+                    driver_missing_strategy=normalized_driver_missing,
+                    target_missing_fill_value=req.missing_fill_value,
                     min_rows=20,
                 )
             except ValueError as inner_e:
@@ -530,15 +593,14 @@ async def process_data(req: ProcessRequest):
     target_col = prep_report["target_col"]
 
     target_only = cleaned_df[[date_col, target_col]].copy()
-    target_only = target_only.set_index(date_col).sort_index()
+    target_only = target_only.sort_values(date_col).reset_index(drop=True)
     target_only[target_col] = pd.to_numeric(target_only[target_col], errors="coerce")
-    target_only = target_only.resample(resample_freq).mean(numeric_only=True)
-    target_only = target_only.dropna(subset=[target_col]).reset_index()
+    target_only = target_only.dropna(subset=[target_col])
 
     if target_only.empty:
         raise HTTPException(
             status_code=400,
-            detail=f"Preprocessing error: no target rows remain after resampling to '{resample_freq}'.",
+            detail="Preprocessing error: no target rows remain after cleaning.",
         )
 
     _processed_dataframes[req.project_id] = target_only
@@ -549,6 +611,27 @@ async def process_data(req: ProcessRequest):
     driver_numeric_cols: list[str] = []
     merged_driver_df: pd.DataFrame | None = None
     used_driver_cols: set[str] = set()
+
+    target_freq_info = validate_frequency(target_only, date_col)
+    detected_target_freq = _label_to_freq(target_freq_info.get("detected_frequency"))
+    if req.frequency is None or str(req.frequency).strip().lower() in {"", "auto"}:
+        selected_target_freq = detected_target_freq or "W-SUN"
+    else:
+        selected_target_freq = resample_freq
+
+    if req.project_id in _projects:
+        _projects[req.project_id].setdefault("config", {})
+        _projects[req.project_id]["config"]["frequency"] = selected_target_freq
+
+    driver_settings = req.driver_settings if isinstance(req.driver_settings, dict) else {}
+
+    def _driver_setting(file_name: str, key: str, default_value: str | None) -> str | None:
+        settings = driver_settings.get(file_name)
+        if isinstance(settings, dict):
+            value = settings.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return default_value
 
     for idx, raw_driver_df in enumerate(driver_files):
         if raw_driver_df is None or raw_driver_df.empty:
@@ -567,6 +650,20 @@ async def process_data(req: ProcessRequest):
         driver_df = driver_df.dropna(subset=[requested_driver_date_col]).sort_values(requested_driver_date_col)
         driver_df = driver_df.drop_duplicates(subset=[requested_driver_date_col], keep="last")
 
+        driver_freq_info = validate_frequency(driver_df, requested_driver_date_col)
+        detected_driver_freq = _label_to_freq(driver_freq_info.get("detected_frequency"))
+        if req.driver_frequency is None or str(req.driver_frequency).strip().lower() in {"", "auto"}:
+            selected_driver_freq = detected_driver_freq
+        else:
+            selected_driver_freq = driver_resample_freq
+
+        driver_missing_strategy = _driver_setting(
+            driver_file_name, "missing_strategy", normalized_driver_missing
+        )
+        driver_outlier_strategy = _driver_setting(
+            driver_file_name, "outlier_strategy", normalized_driver_outlier
+        )
+
         candidate_numeric = [
             c for c in detect_numeric_columns(driver_df)
             if c != requested_driver_date_col
@@ -579,12 +676,31 @@ async def process_data(req: ProcessRequest):
             continue
 
         driver_clean = driver_df[[requested_driver_date_col, *resolved_numeric_cols]].copy()
-        driver_clean = driver_clean.set_index(requested_driver_date_col).sort_index()
-        driver_clean = driver_clean.resample(driver_resample_freq).mean(numeric_only=True)
-        driver_clean = driver_clean.dropna(how="all")
-        driver_clean = driver_clean.reset_index().rename(
-            columns={requested_driver_date_col: date_col}
-        )
+        driver_clean = driver_clean.sort_values(requested_driver_date_col).reset_index(drop=True)
+        driver_clean = driver_clean.rename(columns={requested_driver_date_col: date_col})
+
+        if driver_missing_strategy:
+            for col in resolved_numeric_cols:
+                if driver_missing_strategy == "interpolate":
+                    driver_clean = handle_missing(driver_clean, col, "interpolate")
+                    driver_clean = handle_missing(driver_clean, col, "ffill")
+                    driver_clean = handle_missing(driver_clean, col, "bfill")
+                elif driver_missing_strategy in {"ffill", "bfill", "mean", "median", "drop"}:
+                    driver_clean = handle_missing(driver_clean, col, driver_missing_strategy)
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="driver_missing_strategy must be one of: drop, mean, median, ffill, bfill, interpolate",
+                    )
+
+        if driver_outlier_strategy and driver_outlier_strategy != "keep":
+            for col in resolved_numeric_cols:
+                driver_clean = handle_outliers(
+                    driver_clean,
+                    col,
+                    action=driver_outlier_strategy,
+                    method="iqr",
+                )
 
         # If a single generic "value" column came from a temp file,
         # expose it with a stable semantic name expected by Step 3.
@@ -618,6 +734,12 @@ async def process_data(req: ProcessRequest):
             {
                 "file_name": driver_file_name,
                 "numeric_columns": renamed_cols,
+                "frequency": {
+                    "detected": driver_freq_info,
+                    "selected": selected_driver_freq,
+                },
+                "missing_strategy": driver_missing_strategy,
+                "outlier_strategy": driver_outlier_strategy,
             }
         )
         driver_numeric_cols.extend(renamed_cols)
@@ -640,11 +762,15 @@ async def process_data(req: ProcessRequest):
         "dtypes": preview["dtypes"],
         "report": prep_report,
         "note": process_note,
+        "target_frequency": {
+            "detected": target_freq_info,
+            "selected": selected_target_freq,
+        },
         "driver": {
             "file_name": driver_file_results[0]["file_name"] if driver_file_results else None,
             "file_names": [item["file_name"] for item in driver_file_results],
             "numeric_columns": driver_numeric_cols,
-            "frequency": driver_resample_freq if driver_file_results else None,
+            "frequency": driver_file_results[0]["frequency"]["selected"] if driver_file_results else None,
             "files": driver_file_results,
         },
     }
@@ -677,6 +803,102 @@ async def get_analysis_sample():
     holiday_weekly_path = _resolve_analysis_path(outputs.get("holiday_weekly_csv", ""), "artifacts/holiday_weekly.csv")
     driver_series_path = _resolve_analysis_path(outputs.get("driver_series_csv", ""), "artifacts/driver_series.csv")
     plot_path = _resolve_analysis_path(outputs.get("plot", ""), "plots/model_fit.png")
+
+    return {
+        "manifest": manifest,
+        "available": {
+            "plot": plot_path.exists(),
+            "forecast": forecast_path.exists(),
+            "test_predictions": test_pred_path.exists(),
+            "feature_importance": feature_importance_path.exists(),
+            "feature_frame": feature_frame_path.exists(),
+            "target_series": target_series_path.exists(),
+            "temp_weekly": temp_weekly_path.exists(),
+            "holiday_weekly": holiday_weekly_path.exists(),
+            "driver_series": driver_series_path.exists(),
+        },
+        "datasets": {
+            "forecast": _csv_records(forecast_path),
+            "test_predictions": _csv_records(test_pred_path),
+            "feature_importance": _csv_records(feature_importance_path),
+            "feature_frame": _csv_records(feature_frame_path),
+            "target_series": _csv_records(target_series_path),
+            "temp_weekly": _csv_records(temp_weekly_path),
+            "holiday_weekly": _csv_records(holiday_weekly_path),
+            "driver_series": _csv_records(driver_series_path),
+        },
+    }
+
+
+@router.get("/analysis/project/{project_id}")
+async def get_analysis_for_project(project_id: str):
+    project = _projects.get(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    config = project.get("config") if isinstance(project.get("config"), dict) else {}
+    run_dir_value = config.get("analysis_run_dir")
+    if not run_dir_value:
+        raise HTTPException(status_code=404, detail="No analysis run found for this project")
+
+    base_dir = (OUTPUTS_DIR / str(run_dir_value)).resolve()
+    if not base_dir.exists():
+        raise HTTPException(status_code=404, detail="Analysis run directory not found")
+
+    manifest_path = base_dir / "analysis_result.json"
+    if not manifest_path.exists():
+        raise HTTPException(status_code=404, detail="analysis_result.json not found")
+
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    outputs = manifest.get("outputs", {})
+
+    forecast_path = _resolve_analysis_path_multi_for_dir(
+        base_dir,
+        outputs.get("forecast_csv", ""),
+        ["forecast.csv", "forecasts/forecast.csv"],
+    )
+    test_pred_path = _resolve_analysis_path_for_dir(
+        base_dir,
+        outputs.get("test_predictions_csv", ""),
+        "artifacts/test_predictions.csv",
+    )
+    feature_importance_path = _resolve_analysis_path_for_dir(
+        base_dir,
+        outputs.get("feature_importance_csv", ""),
+        "artifacts/feature_importance.csv",
+    )
+    feature_frame_path = _resolve_analysis_path_for_dir(
+        base_dir,
+        outputs.get("feature_frame_csv", ""),
+        "artifacts/feature_frame.csv",
+    )
+    target_series_path = _resolve_analysis_path_for_dir(
+        base_dir,
+        outputs.get("target_series_csv", ""),
+        "artifacts/target_series.csv",
+    )
+    temp_weekly_path = _resolve_analysis_path_for_dir(
+        base_dir,
+        outputs.get("temp_weekly_csv", ""),
+        "artifacts/temp_weekly.csv",
+    )
+    holiday_weekly_path = _resolve_analysis_path_for_dir(
+        base_dir,
+        outputs.get("holiday_weekly_csv", ""),
+        "artifacts/holiday_weekly.csv",
+    )
+    driver_series_path = _resolve_analysis_path_for_dir(
+        base_dir,
+        outputs.get("driver_series_csv", ""),
+        "artifacts/driver_series.csv",
+    )
+    plot_path = _resolve_analysis_path_for_dir(
+        base_dir,
+        outputs.get("plot", ""),
+        "plots/model_fit.png",
+    )
 
     return {
         "manifest": manifest,
@@ -747,6 +969,14 @@ async def train_model(req: TrainRequest):
         date_col = prep_report["date_col"]
         target_col = prep_report["target_col"]
 
+    raw_freq = (req.frequency or "").strip()
+    if raw_freq.lower() in {"", "auto"}:
+        raw_freq = ""
+    train_freq = _normalize_frequency(raw_freq) if raw_freq else None
+    if not train_freq:
+        target_freq_info = validate_frequency(df, date_col)
+        train_freq = _label_to_freq(target_freq_info.get("detected_frequency")) or "W-SUN"
+
     selected_drivers = req.drivers
     if selected_drivers and req.project_id in _processed_driver_dataframes:
         driver_df = _processed_driver_dataframes[req.project_id].copy()
@@ -760,14 +990,29 @@ async def train_model(req: TrainRequest):
 
         driver_date_col = _resolve_optional_df_column(driver_df, date_col)
         if available_driver_cols and driver_date_col:
-            train_freq = _normalize_frequency(req.frequency)
+            driver_freq_info = validate_frequency(driver_df, driver_date_col)
+            driver_gap_days = driver_freq_info.get("median_gap_days")
+            target_gap_days = _freq_to_days(train_freq)
             aligned_driver_df = driver_df[[driver_date_col, *available_driver_cols]].copy()
             aligned_driver_df[driver_date_col] = pd.to_datetime(
                 aligned_driver_df[driver_date_col], errors="coerce"
             )
             aligned_driver_df = aligned_driver_df.dropna(subset=[driver_date_col])
+            target_start = pd.to_datetime(df[date_col].min(), errors="coerce")
+            target_end = pd.to_datetime(df[date_col].max(), errors="coerce")
+            if pd.notna(target_start) and pd.notna(target_end):
+                aligned_driver_df = aligned_driver_df[
+                    (aligned_driver_df[driver_date_col] >= target_start)
+                    & (aligned_driver_df[driver_date_col] <= target_end)
+                ]
             aligned_driver_df = aligned_driver_df.set_index(driver_date_col).sort_index()
             aligned_driver_df = aligned_driver_df.resample(train_freq).mean(numeric_only=True)
+            if (
+                driver_gap_days is not None
+                and target_gap_days is not None
+                and driver_gap_days > target_gap_days
+            ):
+                aligned_driver_df = aligned_driver_df.ffill().bfill()
             aligned_driver_df = aligned_driver_df.reset_index().rename(
                 columns={driver_date_col: date_col}
             )
@@ -784,6 +1029,22 @@ async def train_model(req: TrainRequest):
     date_col = _resolve_df_column(df, date_col, "date")
     target_col = _resolve_df_column(df, target_col, "target")
 
+    if req.test_window_weeks is not None:
+        test_window_periods = req.test_window_weeks
+    else:
+        test_window_periods = req.test_window_periods
+
+    run_id = str(uuid.uuid4())
+    run_dir = OUTPUTS_DIR / "runs" / req.project_id / run_id
+
+    if req.project_id in _projects:
+        _projects[req.project_id].setdefault("config", {})
+        _projects[req.project_id]["config"]["frequency"] = train_freq
+        _projects[req.project_id]["config"]["test_window_periods"] = test_window_periods
+        _projects[req.project_id]["config"]["analysis_run_dir"] = str(
+            Path("runs") / req.project_id / run_id
+        )
+
     try:
         results = train_and_forecast(
             df=df,
@@ -796,11 +1057,12 @@ async def train_model(req: TrainRequest):
             multivariate_model=req.multivariate_model,
             lag_config=req.lag_config,
             auto_select_lags=req.auto_select_lags,
-            test_window_weeks=req.test_window_weeks,
+            test_window_weeks=test_window_periods,
             validation_mode=req.validation_mode,
             calendar_features=req.calendar_features,
             holiday_features=req.holiday_features,
-            frequency=req.frequency,
+            frequency=train_freq,
+            output_dir=run_dir,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Forecasting error: {e}")
