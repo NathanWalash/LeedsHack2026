@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useBuildStore } from "@/lib/store";
 import { Button, Badge, Card, CardHeader, CardTitle, CardContent } from "@/components/ui";
-import { getSampleAnalysisBundle, type AnalysisBundle } from "@/lib/api";
+import { getProjectAnalysisBundle, getSampleAnalysisBundle, type AnalysisBundle } from "@/lib/api";
 import { buildResultsPageContext } from "@/lib/resultsContext";
 import { AlertCircle, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import {
@@ -190,13 +190,13 @@ function formatDecimal(value: number, maxFractionDigits = 2) {
 }
 
 function getDateString(row: LooseRecord): string | null {
-  const candidate = row.week_ending ?? row.date ?? row.index ?? row.period;
+  const candidate = row.period_ending ?? row.date ?? row.index ?? row.period;
   return typeof candidate === "string" && candidate.trim() ? candidate : null;
 }
 
 function getPrimaryNumericValue(row: LooseRecord): number | null {
   for (const [key, raw] of Object.entries(row)) {
-    if (key === "week_ending" || key === "date" || key === "index") continue;
+    if (key === "period_ending" || key === "date" || key === "index") continue;
     const n = Number(raw);
     if (Number.isFinite(n)) return n;
   }
@@ -259,6 +259,7 @@ function filterRowsByRange<T extends { ts: number }>(
 }
 
 export default function Step4Analysis() {
+  const projectId = useBuildStore((s) => s.projectId);
   const completeStep = useBuildStore((s) => s.completeStep);
   const nextStep = useBuildStore((s) => s.nextStep);
   const prevStep = useBuildStore((s) => s.prevStep);
@@ -289,7 +290,9 @@ export default function Step4Analysis() {
       setLoading(true);
       setLoadError("");
       try {
-        const bundle = await getSampleAnalysisBundle();
+        const bundle = projectId
+          ? await getProjectAnalysisBundle(projectId)
+          : await getSampleAnalysisBundle();
         if (!mounted) return;
         setAnalysis(bundle);
       } catch (err: unknown) {
@@ -317,13 +320,16 @@ export default function Step4Analysis() {
     () =>
       (analysis?.datasets.test_predictions || [])
         .map((r) => ({
-          ts: parseTimestamp(r.week_ending),
-          week_ending: r.week_ending,
+          ts: parseTimestamp(r.period_ending ?? ""),
+          period_ending: r.period_ending,
           actual: Number(r.actual),
           baseline: Number(r.baseline),
           multivariate: Number(r.multivariate),
         }))
-        .filter((r): r is { ts: number; week_ending: string; actual: number; baseline: number; multivariate: number } => r.ts !== null)
+        .filter(
+          (r): r is { ts: number; period_ending: string; actual: number; baseline: number; multivariate: number } =>
+            r.ts !== null
+        )
         .sort((a, b) => a.ts - b.ts),
     [analysis]
   );
@@ -340,11 +346,11 @@ export default function Step4Analysis() {
           if (ts === null || actual === null) return null;
           return {
             ts,
-            week_ending: dateString,
+            period_ending: dateString,
             actual,
           };
         })
-        .filter((r): r is { ts: number; week_ending: string; actual: number } => r !== null)
+        .filter((r): r is { ts: number; period_ending: string; actual: number } => r !== null)
         .sort((a, b) => a.ts - b.ts),
     [analysis]
   );
@@ -365,7 +371,7 @@ export default function Step4Analysis() {
       const pred = predMap.get(r.ts);
       return {
         ts: r.ts,
-        week_ending: r.week_ending,
+        period_ending: r.period_ending,
         actual: r.actual,
         baseline: pred ? pred.baseline : null,
         multivariate: pred ? pred.multivariate : null,
@@ -378,13 +384,13 @@ export default function Step4Analysis() {
     () =>
       (analysis?.datasets.forecast || [])
         .map((r) => ({
-          ts: parseTimestamp(r.week_ending),
-          week_ending: r.week_ending,
+          ts: parseTimestamp(r.period_ending ?? ""),
+          period_ending: r.period_ending,
           baseline_forecast: Number(r.baseline_forecast),
           multivariate_forecast: Number(r.multivariate_forecast),
         }))
         .filter(
-          (r): r is { ts: number; week_ending: string; baseline_forecast: number; multivariate_forecast: number } =>
+          (r): r is { ts: number; period_ending: string; baseline_forecast: number; multivariate_forecast: number } =>
             r.ts !== null
         )
         .sort((a, b) => a.ts - b.ts),
@@ -396,7 +402,7 @@ export default function Step4Analysis() {
       number,
       {
         ts: number;
-        week_ending: string;
+        period_ending: string;
         actual: number | null;
         baseline_forecast: number | null;
         multivariate_forecast: number | null;
@@ -408,7 +414,7 @@ export default function Step4Analysis() {
     for (const row of historicalTargetData) {
       rows.set(row.ts, {
         ts: row.ts,
-        week_ending: row.week_ending,
+        period_ending: row.period_ending,
         actual: row.actual,
         baseline_forecast: null,
         multivariate_forecast: null,
@@ -425,7 +431,7 @@ export default function Step4Analysis() {
       } else {
         rows.set(row.ts, {
           ts: row.ts,
-          week_ending: row.week_ending,
+          period_ending: row.period_ending,
           actual: null,
           baseline_forecast: row.baseline_forecast,
           multivariate_forecast: row.multivariate_forecast,
@@ -468,7 +474,7 @@ export default function Step4Analysis() {
     () =>
       testFitData.map((r) => ({
         ts: r.ts,
-        week_ending: r.week_ending,
+        period_ending: r.period_ending,
         baseline_error: Math.abs(r.actual - r.baseline),
         multivariate_error: Math.abs(r.actual - r.multivariate),
       })),
@@ -476,7 +482,7 @@ export default function Step4Analysis() {
   );
 
   const driverData = useMemo(() => {
-    type DriverRow = { ts: number; week_ending: string } & Record<string, number | string | null>;
+    type DriverRow = { ts: number; period_ending: string } & Record<string, number | string | null>;
     const merged = new Map<number, DriverRow>();
     const settings = analysis?.manifest?.settings || {};
     const preferredDriverKeys = Array.from(
@@ -495,11 +501,15 @@ export default function Step4Analysis() {
         const ts = parseTimestamp(dateString);
         if (ts === null) continue;
 
-        const existing = merged.get(ts) || { ts, week_ending: dateString };
-        const next: DriverRow = { ...existing, ts, week_ending: existing.week_ending || dateString };
+        const existing = merged.get(ts) || { ts, period_ending: dateString };
+        const next: DriverRow = {
+          ...existing,
+          ts,
+          period_ending: existing.period_ending || dateString,
+        };
 
         for (const [key, raw] of Object.entries(asRecord)) {
-          if (key === "week_ending" || key === "date" || key === "index") continue;
+          if (key === "period_ending" || key === "date" || key === "index") continue;
           const n = Number(raw);
           next[key] = Number.isFinite(n) ? n : null;
         }
@@ -516,7 +526,7 @@ export default function Step4Analysis() {
       } else {
         const sample = featureRows[0] as LooseRecord;
         for (const key of Object.keys(sample)) {
-          if (["week_ending", "date", "index", "period", "y"].includes(key)) continue;
+          if (["period_ending", "date", "index", "period", "y"].includes(key)) continue;
           if (key.startsWith("target_lag_") || key.endsWith("_lag_1") || key.endsWith("_lag_2")) continue;
           candidateKeys.add(key);
         }
@@ -529,8 +539,12 @@ export default function Step4Analysis() {
         const ts = parseTimestamp(dateString);
         if (ts === null) continue;
 
-        const existing = merged.get(ts) || { ts, week_ending: dateString };
-        const next: DriverRow = { ...existing, ts, week_ending: existing.week_ending || dateString };
+        const existing = merged.get(ts) || { ts, period_ending: dateString };
+        const next: DriverRow = {
+          ...existing,
+          ts,
+          period_ending: existing.period_ending || dateString,
+        };
         let assigned = false;
 
         for (const key of candidateKeys) {
@@ -563,11 +577,11 @@ export default function Step4Analysis() {
         asRecord.temp ??
         getPrimaryNumericValue(asRecord);
       const temp = Number(tempRaw);
-      const existing = merged.get(ts) || { ts, week_ending: dateString };
+      const existing = merged.get(ts) || { ts, period_ending: dateString };
       merged.set(ts, {
         ...existing,
         ts,
-        week_ending: existing.week_ending || dateString,
+        period_ending: existing.period_ending || dateString,
         temp_mean: Number.isFinite(temp) ? temp : null,
       });
     }
@@ -581,11 +595,11 @@ export default function Step4Analysis() {
 
       const countRaw = asRecord.holiday_count ?? asRecord.value ?? getPrimaryNumericValue(asRecord);
       const count = Number(countRaw);
-      const existing = merged.get(ts) || { ts, week_ending: dateString };
+      const existing = merged.get(ts) || { ts, period_ending: dateString };
       merged.set(ts, {
         ...existing,
         ts,
-        week_ending: existing.week_ending || dateString,
+        period_ending: existing.period_ending || dateString,
         holiday_count: Number.isFinite(count) ? count : null,
       });
     }
@@ -597,7 +611,7 @@ export default function Step4Analysis() {
     const keys = new Set<string>();
     for (const row of driverData as Array<Record<string, unknown>>) {
       for (const key of Object.keys(row)) {
-        if (key === "ts" || key === "week_ending") continue;
+        if (key === "ts" || key === "period_ending") continue;
         keys.add(key);
       }
     }
@@ -717,6 +731,19 @@ export default function Step4Analysis() {
   const baselineRmse = Number(metrics?.baseline_rmse);
   const multivariateRmse = Number(metrics?.multivariate_rmse);
   const improvementPct = Number(metrics?.improvement_pct);
+  const baselineMae = Number(metrics?.baseline_mae);
+  const multivariateMae = Number(metrics?.multivariate_mae);
+  const baselineNrmse = Number(metrics?.baseline_nrmse_pct);
+  const multivariateNrmse = Number(metrics?.multivariate_nrmse_pct);
+  const baselineWfRmse = Number(metrics?.baseline_walk_forward_rmse);
+  const multivariateWfRmse = Number(metrics?.multivariate_walk_forward_rmse);
+  const settings = analysis?.manifest?.settings || {};
+  const testWindowPeriods = Number(settings["test_window_periods"]);
+  const horizonPeriods = Number(settings["forecast_horizon"]);
+  const lagsUsed = Array.isArray(settings["lags"]) ? (settings["lags"] as unknown[]).join(", ") : "";
+  const driversUsed = Array.isArray(settings["selected_drivers"])
+    ? (settings["selected_drivers"] as unknown[]).join(", ")
+    : "";
   const targetLabel = analysis?.manifest.data_summary.target_name || "Target";
   const slideFlow = SLIDE_FLOW;
   const currentSlide = slideFlow[currentSlideIndex] || null;
@@ -824,7 +851,7 @@ export default function Step4Analysis() {
                     <InfoCard
                       label="Target"
                       value={analysis.manifest.data_summary.target_name}
-                      help="This is the thing we are trying to predict each week."
+                      help="This is the thing we are trying to predict each period."
                     />
                     <InfoCard
                       label="Date range"
@@ -834,7 +861,7 @@ export default function Step4Analysis() {
                     <InfoCard
                       label="Rows and freq"
                       value={`${analysis.manifest.data_summary.rows} rows, ${analysis.manifest.data_summary.freq}`}
-                      help="Rows are weekly points. More rows generally means more stable training."
+                      help="Rows are period points. More rows generally means more stable training."
                     />
                     <InfoCard
                       label="Models"
@@ -850,6 +877,23 @@ export default function Step4Analysis() {
                             : "N/A"
                       }`}
                       help="Baseline is the simpler reference model. Multivariate uses extra driver signals."
+                    />
+                    <InfoCard
+                      label="Holdout + horizon"
+                      value={`${Number.isFinite(testWindowPeriods) ? testWindowPeriods : "N/A"} holdout, ${
+                        Number.isFinite(horizonPeriods) ? horizonPeriods : "N/A"
+                      } forecast`}
+                      help="Holdout is the test window size in periods. Horizon is how many periods are forecast."
+                    />
+                    <InfoCard
+                      label="Lags"
+                      value={lagsUsed || "N/A"}
+                      help="Lagged target periods used as inputs."
+                    />
+                    <InfoCard
+                      label="Drivers"
+                      value={driversUsed || "None"}
+                      help="Selected driver signals included in the multivariate model."
                     />
                   </div>
                 </CardContent>
@@ -872,6 +916,56 @@ export default function Step4Analysis() {
                   value={Number.isFinite(improvementPct) ? `${pct.format(improvementPct)}%` : "N/A"}
                   tone="success"
                   explanation="Percent drop in RMSE versus baseline. Positive means the multivariate model improved."
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <KpiCard
+                  title="Baseline MAE"
+                  value={Number.isFinite(baselineMae) ? fmt.format(baselineMae) : "N/A"}
+                  tone="neutral"
+                  explanation="Average absolute error for the baseline model."
+                />
+                <KpiCard
+                  title="Multivariate MAE"
+                  value={Number.isFinite(multivariateMae) ? fmt.format(multivariateMae) : "N/A"}
+                  tone="success"
+                  explanation="Average absolute error for the multivariate model."
+                />
+                <KpiCard
+                  title="NRMSE %"
+                  value={
+                    Number.isFinite(multivariateNrmse)
+                      ? `${pct.format(multivariateNrmse)}%`
+                      : Number.isFinite(baselineNrmse)
+                        ? `${pct.format(baselineNrmse)}%`
+                        : "N/A"
+                  }
+                  tone="neutral"
+                  explanation="RMSE scaled by mean target value. Lower is better."
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <KpiCard
+                  title="Baseline WF RMSE"
+                  value={Number.isFinite(baselineWfRmse) ? fmt.format(baselineWfRmse) : "N/A"}
+                  tone="neutral"
+                  explanation="Walk-forward RMSE for baseline."
+                />
+                <KpiCard
+                  title="Multivariate WF RMSE"
+                  value={Number.isFinite(multivariateWfRmse) ? fmt.format(multivariateWfRmse) : "N/A"}
+                  tone="success"
+                  explanation="Walk-forward RMSE for multivariate."
+                />
+                <KpiCard
+                  title="Improvement (abs)"
+                  value={
+                    Number.isFinite(baselineRmse) && Number.isFinite(multivariateRmse)
+                      ? fmt.format(baselineRmse - multivariateRmse)
+                      : "N/A"
+                  }
+                  tone="neutral"
+                  explanation="Absolute RMSE reduction versus baseline."
                 />
               </div>
               <div className="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3">

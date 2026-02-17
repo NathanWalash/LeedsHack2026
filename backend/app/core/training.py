@@ -103,7 +103,6 @@ def prepare_series_and_drivers(
     df = df.set_index(date_col)
 
     resolved_freq = _normalize_train_frequency(frequency) if frequency else _infer_train_frequency(df.index)
-    df = df.asfreq(resolved_freq)
 
     if target_col not in df.columns:
         raise ValueError(f"Target column not found: {target_col}")
@@ -120,7 +119,7 @@ def prepare_series_and_drivers(
             selected_driver_cols = driver_cols
 
     if holiday_features:
-        holiday_df = build_holiday_features(target_series.index)
+        holiday_df = build_holiday_features(target_series.index, freq=resolved_freq)
         if drivers_df is None:
             drivers_df = holiday_df
         elif "holiday_count" not in drivers_df.columns:
@@ -128,7 +127,7 @@ def prepare_series_and_drivers(
 
     calendar_df = None
     if calendar_features:
-        calendar_df = build_calendar_features(target_series.index)
+        calendar_df = build_calendar_features(target_series.index, freq=resolved_freq)
 
     return target_series, drivers_df, calendar_df, selected_driver_cols, resolved_freq
 
@@ -194,7 +193,7 @@ def forecast_future(
         freq=freq,
     )
 
-    future_drivers = build_future_drivers(drivers_df, calendar_df, future_index)
+    future_drivers = build_future_drivers(drivers_df, calendar_df, future_index, freq=freq)
 
     baseline_features = [col for col in frame.columns if col.startswith("target_lag_")]
     multivariate_features = [col for col in frame.columns if col != "y"]
@@ -266,7 +265,7 @@ def forecast_future(
 
     return pd.DataFrame(
         {
-            "week_ending": future_index,
+            "period_ending": future_index,
             "baseline_forecast": baseline_forecasts,
             "multivariate_forecast": multi_forecasts,
         }
@@ -366,7 +365,7 @@ def train_and_forecast(
 
     test_df = pd.DataFrame(
         {
-            "week_ending": eval_result["test_index"],
+            "period_ending": eval_result["test_index"],
             "actual": eval_result["y_test"],
             "baseline": eval_result["y_pred_base"],
             "multivariate": eval_result["y_pred_multi"],
@@ -406,30 +405,30 @@ def train_and_forecast(
     eval_result["importances"].reset_index().rename(
         columns={"index": "feature", 0: "importance"}
     ).to_csv(importance_path, index=False)
-    frame.reset_index().rename(columns={"index": "week_ending"}).to_csv(
+    frame.reset_index().rename(columns={"index": "period_ending"}).to_csv(
         feature_frame_path, index=False
     )
     target_series.to_frame(name="y").reset_index().rename(
-        columns={date_col: "week_ending", "index": "week_ending"}
+        columns={date_col: "period_ending", "index": "period_ending"}
     ).to_csv(target_series_path, index=False)
 
     if drivers_df is not None and "temp_mean" in drivers_df.columns:
         drivers_df["temp_mean"].reset_index().rename(
-            columns={date_col: "week_ending", "index": "week_ending"}
+            columns={date_col: "period_ending", "index": "period_ending"}
         ).to_csv(temp_weekly_path, index=False)
 
     if drivers_df is not None and "holiday_count" in drivers_df.columns:
         drivers_df["holiday_count"].reset_index().rename(
-            columns={date_col: "week_ending", "index": "week_ending"}
+            columns={date_col: "period_ending", "index": "period_ending"}
         ).to_csv(holiday_weekly_path, index=False)
     elif holiday_features:
         build_holiday_features(target_series.index).reset_index().rename(
-            columns={date_col: "week_ending", "index": "week_ending"}
+            columns={date_col: "period_ending", "index": "period_ending"}
         ).to_csv(holiday_weekly_path, index=False)
 
     if drivers_df is not None and not drivers_df.empty:
         drivers_df.reset_index().rename(
-            columns={date_col: "week_ending", "index": "week_ending"}
+            columns={date_col: "period_ending", "index": "period_ending"}
         ).to_csv(driver_series_path, index=False)
 
     metrics = {
@@ -463,7 +462,7 @@ def train_and_forecast(
         "selected_drivers": selected_driver_cols,
         "driver_columns_used": list(drivers_df.columns) if drivers_df is not None else [],
         "lags": lags,
-        "test_window_weeks": test_window_weeks,
+        "test_window_periods": test_window_weeks,
         "validation_mode": validation_mode,
         "forecast_horizon": horizon,
         "frequency": resolved_freq,
@@ -494,11 +493,11 @@ def train_and_forecast(
     return {
         "baseline": {
             "predictions": forecast_df["baseline_forecast"].tolist(),
-            "index": forecast_df["week_ending"].dt.strftime("%Y-%m-%d").tolist(),
+            "index": forecast_df["period_ending"].dt.strftime("%Y-%m-%d").tolist(),
         },
         "multivariate": {
             "predictions": forecast_df["multivariate_forecast"].tolist(),
-            "index": forecast_df["week_ending"].dt.strftime("%Y-%m-%d").tolist(),
+            "index": forecast_df["period_ending"].dt.strftime("%Y-%m-%d").tolist(),
             "feature_importance": eval_result["importances"].to_dict(),
         },
         "historical": {
@@ -511,7 +510,7 @@ def train_and_forecast(
         "outputs": outputs,
         "settings": settings,
         "test_predictions": {
-            "index": test_df["week_ending"].dt.strftime("%Y-%m-%d").tolist(),
+            "index": test_df["period_ending"].dt.strftime("%Y-%m-%d").tolist(),
             "actual": test_df["actual"].tolist(),
             "baseline": test_df["baseline"].tolist(),
             "multivariate": test_df["multivariate"].tolist(),

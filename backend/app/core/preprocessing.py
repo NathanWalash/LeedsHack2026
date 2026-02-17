@@ -435,6 +435,10 @@ def clean_dataframe_for_training(
     *,
     outlier_action: str = "cap",
     driver_outlier_action: Optional[str] = None,
+    target_missing_strategy: Optional[str] = None,
+    driver_missing_strategy: Optional[str] = None,
+    target_missing_fill_value: Optional[float] = None,
+    driver_missing_fill_value: Optional[float] = None,
     average_daily_drivers_to_weekly: bool = True,
     min_rows: int = 20,
 ) -> tuple[pd.DataFrame, dict]:
@@ -528,14 +532,55 @@ def clean_dataframe_for_training(
 
     resolved_driver_outlier_action = driver_outlier_action or outlier_action
 
-    # Fill target with interpolation first, then edge-fill. Any unresolved NaN is dropped.
-    result = handle_missing(result, target_col_clean, "interpolate")
-    result = handle_missing(result, target_col_clean, "ffill")
-    result = handle_missing(result, target_col_clean, "bfill")
-    result = handle_missing(result, target_col_clean, "drop")
+    # Fill target with chosen strategy (fallback to the robust default).
+    if not target_missing_strategy:
+        result = handle_missing(result, target_col_clean, "interpolate")
+        result = handle_missing(result, target_col_clean, "ffill")
+        result = handle_missing(result, target_col_clean, "bfill")
+        result = handle_missing(result, target_col_clean, "drop")
+    else:
+        strategy = target_missing_strategy
+        if strategy == "interpolate":
+            result = handle_missing(result, target_col_clean, "interpolate")
+            result = handle_missing(result, target_col_clean, "ffill")
+            result = handle_missing(result, target_col_clean, "bfill")
+            result = handle_missing(result, target_col_clean, "drop")
+        elif strategy in {"ffill", "bfill", "mean", "median", "drop", "value"}:
+            result = handle_missing(
+                result,
+                target_col_clean,
+                strategy,
+                fill_value=target_missing_fill_value,
+            )
+            if strategy != "drop":
+                result = handle_missing(result, target_col_clean, "drop")
+        else:
+            raise ValueError(
+                "Unknown target missing strategy. Use 'drop', 'mean', 'median', "
+                "'ffill', 'bfill', 'interpolate', or 'value'."
+            )
 
     for col in numeric_driver_cols:
-        result = handle_missing(result, col, "median")
+        if not driver_missing_strategy:
+            result = handle_missing(result, col, "median")
+        else:
+            strategy = driver_missing_strategy
+            if strategy == "interpolate":
+                result = handle_missing(result, col, "interpolate")
+                result = handle_missing(result, col, "ffill")
+                result = handle_missing(result, col, "bfill")
+            elif strategy in {"ffill", "bfill", "mean", "median", "drop", "value"}:
+                result = handle_missing(
+                    result,
+                    col,
+                    strategy,
+                    fill_value=driver_missing_fill_value,
+                )
+            else:
+                raise ValueError(
+                    "Unknown driver missing strategy. Use 'drop', 'mean', 'median', "
+                    "'ffill', 'bfill', 'interpolate', or 'value'."
+                )
         if resolved_driver_outlier_action != "keep":
             result = handle_outliers(
                 result,
